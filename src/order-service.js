@@ -96,7 +96,8 @@ function createOrder({ req, db, config, input, merchant, createdVia }) {
   }
 
   const bindCard = String(params.bind_card || params.card_id || '').trim();
-  if (bindCard) {
+  const autoSuccess = getSetting(db, 'auto_success_payments', '0') === '1';
+  if (bindCard && !autoSuccess) {
     const card = cardById(db, config.appSecret, bindCard, false);
     if (!card) throw new EpayError('Bound card was not found', 'CARD_NOT_FOUND');
   }
@@ -120,7 +121,7 @@ function createOrder({ req, db, config, input, merchant, createdVia }) {
     params.name,
     moneyMinor,
     currency,
-    bindCard || null,
+    autoSuccess ? null : (bindCard || null),
     params.notify_url,
     params.return_url,
     params.sitename || null,
@@ -195,6 +196,20 @@ function markOrderPaid({ db, config, tradeNo, pin }) {
   return paid();
 }
 
+function markOrderPaidWithoutCard({ db, tradeNo }) {
+  return db.transaction(() => {
+    const row = db.prepare('SELECT * FROM orders WHERE trade_no = ?').get(tradeNo);
+    if (!row) throw new EpayError('Order not found', 'ORDER_NOT_FOUND', 404, true);
+    if (row.status === 'PAID') return { changed: false, order: orderByTradeNo(db, tradeNo) };
+    if (row.status !== 'PENDING') return { changed: false, order: orderByTradeNo(db, tradeNo) };
+    db.prepare(`
+      UPDATE orders SET status = 'PAID', paid_at = ?, callback_event = 'PAYMENT_SUCCESS'
+      WHERE id = ? AND status = 'PENDING'
+    `).run(Date.now(), row.id);
+    return { changed: true, order: orderByTradeNo(db, tradeNo) };
+  })();
+}
+
 function expireOrder({ db, tradeNo }) {
   return db.transaction(() => {
     const row = db.prepare('SELECT * FROM orders WHERE trade_no = ?').get(tradeNo);
@@ -265,6 +280,7 @@ module.exports = {
   baseUrlFor,
   paymentUrl,
   markOrderPaid,
+  markOrderPaidWithoutCard,
   expireOrder,
   sweepExpiredOrders,
   simulateChargeback,

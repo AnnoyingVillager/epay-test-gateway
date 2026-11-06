@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | GET/POST | `/api.php` | JSON 创建订单 |
 | GET/POST | `/mapi.php` | `/api.php` 的别名 |
-| GET/POST | `/submit.php` | 直接跳转支付页 |
+| GET/POST | `/submit.php` | 直接跳转支付页；自动成功模式下直接跳回商户 |
 | GET | `/pay/:tradeNo` | 支付页；未绑卡时显示绑卡页面 |
 | POST | `/pay/:tradeNo/login` | 绑卡前登录账号 |
 | POST | `/pay/:tradeNo/bind` | 使用卡号、有效期和 CVV 绑定卡片到订单 |
@@ -71,6 +71,18 @@ sign = md5(message + merchant_key)
 ```
 
 传入 `bind_card` 时，该字段返回实际卡 ID；未传入时为 `null`，`payurl` 指向绑卡页面。
+
+## 自动成功模式
+
+管理员可在系统设置中开启“所有传入的支付请求直接返回成功”。该模式只跳过支付页面和卡片校验，不会跳过 PID、MD5 签名、必填参数及 URL 校验。
+
+开启后：
+
+- `/submit.php` 返回 `302`，目标为 `return_url` 并附带签名后的 `trade_status=TRADE_SUCCESS`
+- `/api.php`、`/mapi.php` 的 `status` 为 `paid`
+- API 的 `payurl`、`urlscheme`、`qrcode` 均指向带成功参数的 `return_url`
+- 订单不会绑定虚拟卡，即使传入 `bind_card` 也会被忽略
+- 订单会立即触发 `notify_url` 异步通知
 
 ## API 错误响应
 

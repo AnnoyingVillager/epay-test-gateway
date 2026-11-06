@@ -16,6 +16,7 @@
 - 一键“模拟拒付”，并可模拟已支付订单的拒付/退单
 - 订单绑卡：已绑定订单只接受指定虚拟卡；未绑定订单可登录选卡，或通过卡号、有效期和 CVV 绑卡
 - 3DS 验证可在后台开关；关闭后支付确认无需输入 3DS 密码
+- 管理员可开启“自动成功模式”，让所有通过签名校验的支付请求直接完成，并立即返回 Epay 成功参数
 - 未携带 `bind_card` 的 `/submit.php` 请求不再报错，会跳转到绑卡支付页
 - 订单超时倒计时、自动过期和服务端二次校验
 - 后台订单页轮询状态变化，支付成功、失败、超时或回调更新后自动刷新，待支付页面另有服务端刷新兜底
@@ -27,7 +28,7 @@
 ## 已发布镜像
 
 - `ghcr.io/annoyingvillager/epay-test-gateway:latest`
-- `ghcr.io/annoyingvillager/epay-test-gateway:1.2.4` 和 `:1.2`（对应 Git 标签 `v1.2.4`）
+- `ghcr.io/annoyingvillager/epay-test-gateway:1.2.5` 和 `:1.2`（对应 Git 标签 `v1.2.5`）
 - 同时提供 `linux/amd64` 与 `linux/arm64` 多架构镜像
 
 ## 无需克隆源码部署
@@ -160,6 +161,18 @@ docker run -d \
 2. 不登录，直接输入有效的卡号、`MM/YY` 有效期和 CVV 绑卡后支付。
 
 一旦订单绑定卡片，页面只接受该卡片，不能切换到其他卡。
+
+## 自动成功模式
+
+管理员可在 **系统设置** 中勾选 **所有传入的支付请求直接返回成功**。开启后：
+
+- 请求仍需通过商户 PID 和 MD5 签名校验
+- 不进入绑卡、3DS、余额或拒付检查，携带的 `bind_card` 也会被忽略
+- 订单立即写入为 `PAID`，并触发异步通知
+- `/submit.php` 直接 `302` 跳回带 `trade_status=TRADE_SUCCESS` 签名参数的 `return_url`
+- `/api.php` 和 `/mapi.php` 返回 `status: "paid"`，其 `payurl` 直接指向上述成功回跳地址
+
+该选项仅用于自动化测试，不应在生产环境开启。
 
 ## 商户接入
 
@@ -326,7 +339,7 @@ errcode=CHARGEBACK
 - **订单**：管理员查看全部订单，普通用户仅查看自己卡片关联的订单
 - **用户**：创建管理员/普通用户、启停、重置密码、调整角色
 - **商户**：PID、MD5 密钥、启停、密钥轮换
-- **设置**：站点名称、默认超时、结算货币、支付类型、支付页绑卡、3DS 验证开关
+- **设置**：站点名称、默认超时、结算货币、支付类型、支付页绑卡、3DS 验证、自动成功模式
 
 ## 环境变量
 
@@ -379,7 +392,7 @@ npm test
 
 ## 发布到 GitHub 与 Docker 镜像
 
-仓库已包含 `.github/workflows/docker.yml`。推送 `main` 分支会构建并推送 `ghcr.io/<owner>/<repo>:latest`；推送 `v1.2.4` 这类标签会额外生成版本标签。
+仓库已包含 `.github/workflows/docker.yml`。推送 `main` 分支会构建并推送 `ghcr.io/<owner>/<repo>:latest`；推送 `v1.2.5` 这类标签会额外生成版本标签。
 
 ```bash
 git init -b main
@@ -387,8 +400,8 @@ git add .
 git commit -m "feat: add Epay test gateway"
 gh auth login
 gh repo create epay-test-gateway --public --source=. --remote=origin --push
-git tag v1.2.4
-git push origin v1.2.4
+git tag v1.2.5
+git push origin v1.2.5
 ```
 
 首次使用 GHCR 时，Actions 使用仓库的 `GITHUB_TOKEN` 推送。部署机器拉取公开镜像：

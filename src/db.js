@@ -36,6 +36,7 @@ const DEFAULT_SETTINGS = {
   order_timeout_seconds: '900',
   require_card_binding: '1',
   require_3ds: '1',
+  auto_success_payments: '0',
   default_currency: 'CNY',
   notify_retry_count: '3',
   supported_types: 'alipay,wxpay,qqpay'

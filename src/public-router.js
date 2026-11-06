@@ -14,6 +14,7 @@ const {
   createOrder,
   paymentUrl,
   markOrderPaid,
+  markOrderPaidWithoutCard,
   expireOrder,
   renderOrderContext
 } = require('./order-service');
@@ -38,6 +39,25 @@ function parseCardExpiry(value) {
 function router({ db, config, notification }) {
   const route = express.Router();
 
+  function autoSuccessEnabled() {
+    return getSetting(db, 'auto_success_payments', '0') === '1';
+  }
+
+  function signedReturnUrl(order, merchant) {
+    const params = notification.publicReturnParams(order, merchant);
+    const target = new URL(order.returnUrl);
+    for (const [key, value] of Object.entries(params)) target.searchParams.set(key, value);
+    return target.toString();
+  }
+
+  function createPaymentOrder({ req, params, merchant, createdVia }) {
+    const result = createOrder({ req, db, config, input: params, merchant, createdVia });
+    if (!autoSuccessEnabled()) return { ...result, autoPaid: false };
+    const completed = markOrderPaidWithoutCard({ db, tradeNo: result.order.tradeNo });
+    if (completed.changed) notification.enqueue(completed.order.id);
+    return { ...result, order: completed.order, autoPaid: completed.order.status === 'PAID' };
+  }
+
   route.get('/', (req, res) => {
     res.render('home', {
       title: '测试网关',
@@ -61,8 +81,8 @@ function router({ db, config, notification }) {
         throw new EpayError('Only act=order is supported', 'UNSUPPORTED_ACTION');
       }
       const merchant = checkMerchant(req, db, config, params);
-      const { order, reused } = createOrder({ req, db, config, input: params, merchant, createdVia: 'api' });
-      const payurl = paymentUrl(req, config, order.tradeNo);
+      const { order, reused, autoPaid } = createPaymentOrder({ req, params, merchant, createdVia: 'api' });
+      const payurl = autoPaid ? signedReturnUrl(order, merchant) : paymentUrl(req, config, order.tradeNo);
       res.json({
         code: 1,
         msg: reused ? 'Order already exists' : 'success',
@@ -90,8 +110,8 @@ function router({ db, config, notification }) {
     try {
       const params = normalizeParams({ ...req.query, ...req.body });
       const merchant = checkMerchant(req, db, config, params);
-      const { order } = createOrder({ req, db, config, input: params, merchant, createdVia: 'submit' });
-      res.redirect(302, paymentUrl(req, config, order.tradeNo));
+      const { order, autoPaid } = createPaymentOrder({ req, params, merchant, createdVia: 'submit' });
+      res.redirect(302, autoPaid ? signedReturnUrl(order, merchant) : paymentUrl(req, config, order.tradeNo));
     } catch (error) {
       if (error instanceof EpayError) {
         return res.status(error.statusCode).render('payment-error', {
@@ -275,31 +295,27 @@ function router({ db, config, notification }) {
         });
       }
       notification.enqueue(order.id);
-      const params = notification.publicReturnParams(order, merchant);
-      const target = new URL(order.returnUrl);
-      for (const [key, value] of Object.entries(params)) target.searchParams.set(key, value);
+      const target = signedReturnUrl(order, merchant);
       if (req.get('x-payment-ajax') === '1') {
-        return res.json({ ok: true, status: order.status, redirectUrl: target.toString() });
+        return res.json({ ok: true, status: order.status, redirectUrl: target });
       }
-      return res.redirect(303, target.toString());
+      return res.redirect(303, target);
     } catch (error) {
       if (error instanceof EpayError && error.terminal) {
         const order = orderByTradeNo(db, req.params.tradeNo);
         if (order) {
           const merchant = orderMerchant(order);
           notification.enqueue(order.id);
-          const params = notification.publicReturnParams(order, merchant);
-          const target = new URL(order.returnUrl);
-          for (const [key, value] of Object.entries(params)) target.searchParams.set(key, value);
+          const target = signedReturnUrl(order, merchant);
           if (req.get('x-payment-ajax') === '1') {
             return res.status(error.statusCode || 409).json({
               ok: false,
               status: order.status,
               error: { code: error.code, message: error.message },
-              redirectUrl: target.toString()
+              redirectUrl: target
             });
           }
-          return res.redirect(303, target.toString());
+          return res.redirect(303, target);
         }
       }
       next(error);

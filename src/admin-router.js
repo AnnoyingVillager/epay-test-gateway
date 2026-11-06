@@ -687,6 +687,7 @@ function router({ db, config, notification, logger }) {
     const currency = String(req.body.default_currency || 'CNY').trim().toUpperCase();
     const requireBinding = req.body.require_card_binding === '1' ? '1' : '0';
     const require3ds = req.body.require_3ds === '1' ? '1' : '0';
+    const autoSuccessPayments = req.body.auto_success_payments === '1' ? '1' : '0';
     const supportedTypes = String(req.body.supported_types || '').split(',').map((item) => item.trim()).filter(Boolean).join(',');
     if (timeout === null || !/^[A-Z]{3}$/.test(currency) || !supportedTypes) {
       return redirectMessage(res, '/admin/settings', 'error', '设置参数无效。订单超时需为 60-86400 秒。');
@@ -696,6 +697,7 @@ function router({ db, config, notification, logger }) {
     setSetting(db, 'default_currency', currency);
     setSetting(db, 'require_card_binding', requireBinding);
     setSetting(db, 'require_3ds', require3ds);
+    setSetting(db, 'auto_success_payments', autoSuccessPayments);
     setSetting(db, 'supported_types', supportedTypes);
     res.app.locals.siteName = siteName;
     redirectMessage(res, '/admin/settings', 'ok', '系统设置已保存。');

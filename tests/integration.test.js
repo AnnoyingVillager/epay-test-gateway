@@ -218,6 +218,59 @@ test('admin, Epay API, payment, callbacks, failures and chargeback work end to e
   }));
   assert.equal(response.status, 302);
   assert.match(response.headers.location, /\/pay\/T/);
+
+  response = await agent.get('/admin/settings');
+  assert.equal(response.status, 200);
+  assert.match(response.text, /所有传入的支付请求直接返回成功/);
+  csrf = csrfFrom(response.text);
+  const settings = Object.fromEntries(appBundle.db.prepare('SELECT key, value FROM settings').all().map((row) => [row.key, row.value]));
+  response = await agent.post('/admin/settings').type('form').send({
+    _csrf: csrf,
+    site_name: settings.site_name,
+    order_timeout_seconds: settings.order_timeout_seconds,
+    default_currency: settings.default_currency,
+    supported_types: settings.supported_types,
+    require_card_binding: settings.require_card_binding,
+    require_3ds: settings.require_3ds,
+    auto_success_payments: '1'
+  });
+  assert.equal(response.status, 302);
+  assert.equal(appBundle.db.prepare("SELECT value FROM settings WHERE key = 'auto_success_payments'").get().value, '1');
+
+  const autoApiParams = signedOrderParams('integration-merchant-key', {
+    notify_url: `${callbackBase}/notify`,
+    return_url: `${callbackBase}/return-auto-api`,
+    out_trade_no: `AUTO-API-${Date.now()}`,
+    bind_card: 'CARD-DOES-NOT-EXIST'
+  });
+  response = await request(appBundle.app).get('/api.php').query(autoApiParams);
+  assert.equal(response.status, 200);
+  assert.equal(response.body.code, 1);
+  assert.equal(response.body.status, 'paid');
+  const autoApiReturn = new URL(response.body.payurl);
+  assert.equal(autoApiReturn.origin + autoApiReturn.pathname, `${callbackBase}/return-auto-api`);
+  assert.equal(autoApiReturn.searchParams.get('trade_status'), 'TRADE_SUCCESS');
+  assert.ok(autoApiReturn.searchParams.get('sign'));
+  const autoApiOrder = appBundle.db.prepare('SELECT * FROM orders WHERE trade_no = ?').get(response.body.trade_no);
+  assert.equal(autoApiOrder.status, 'PAID');
+  assert.equal(autoApiOrder.card_id, null);
+  await waitFor(() => appBundle.db.prepare('SELECT * FROM callback_logs WHERE order_id = ? AND success = 1').get(autoApiOrder.id));
+
+  const autoSubmitParams = signedOrderParams('integration-merchant-key', {
+    notify_url: `${callbackBase}/notify`,
+    return_url: `${callbackBase}/return-auto-submit`,
+    out_trade_no: `AUTO-SUBMIT-${Date.now()}`
+  });
+  response = await request(appBundle.app).get('/submit.php').query(autoSubmitParams);
+  assert.equal(response.status, 302);
+  const autoSubmitReturn = new URL(response.headers.location);
+  assert.equal(autoSubmitReturn.origin + autoSubmitReturn.pathname, `${callbackBase}/return-auto-submit`);
+  assert.equal(autoSubmitReturn.searchParams.get('trade_status'), 'TRADE_SUCCESS');
+  assert.ok(autoSubmitReturn.searchParams.get('sign'));
+  const autoSubmitOrder = appBundle.db.prepare('SELECT * FROM orders WHERE trade_no = ?').get(autoSubmitReturn.searchParams.get('trade_no'));
+  assert.equal(autoSubmitOrder.status, 'PAID');
+  assert.equal(autoSubmitOrder.card_id, null);
+  await waitFor(() => appBundle.db.prepare('SELECT * FROM callback_logs WHERE order_id = ? AND success = 1').get(autoSubmitOrder.id));
 });
 
 test('admin and user roles, card ownership, manual consume and card binding flow work end to end', async (t) => {

@@ -14,6 +14,8 @@
       <label class="field checkbox-field"><input type="checkbox" name="require_card_binding" value="1" <%= settings.require_card_binding === '1' ? 'checked' : '' %>><span>未绑卡订单允许在支付页绑定虚拟卡</span></label>
       <label class="field checkbox-field"><input type="checkbox" name="require_3ds" value="1" <%= settings.require_3ds === '1' ? 'checked' : '' %>><span>支付时开启 3DS 密码验证</span></label>
       <p class="form-hint">关闭 3DS 后，支付确认页不再要求输入 3DS 密码，绑定有效卡号、有效期和 CVV 后可直接支付。</p>
+      <label class="field checkbox-field"><input type="checkbox" name="auto_success_payments" value="1" <%= settings.auto_success_payments === '1' ? 'checked' : '' %>><span>所有传入的支付请求直接返回成功</span></label>
+      <div class="alert alert-warning"><strong>自动成功模式：</strong>开启后会跳过绑卡、3DS、余额和拒付检查，订单立即标记为已完成并触发异步回调。仅用于测试。</div>
       <div class="form-actions"><button class="button button-primary" type="submit">保存系统设置</button></div>
     </form>
     <p class="form-hint">商户也可通过订单参数 <code>timeout</code> 或 <code>expires_in</code> 覆盖超时时间，范围 60-86400 秒。该参数需要参与签名。</p>
