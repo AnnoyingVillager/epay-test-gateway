@@ -33,7 +33,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let checking = false;
 
     async function checkOrders() {
-      if (checking || document.hidden) return;
+      if (checking) return;
       checking = true;
       try {
         const response = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store' });

@@ -37,7 +37,7 @@ function createApp(options) {
   };
   app.locals.statusLabel = (status) => ({
     active: '可支付', declined: '模拟拒付', frozen: '已冻结',
-    PENDING: '待支付', PAID: '已支付', EXPIRED: '已超时', FAILED: '支付失败', CHARGEBACK: '已拒付/退单',
+    PENDING: '待支付', PAID: '已完成', EXPIRED: '已超时', FAILED: '支付失败', CHARGEBACK: '已拒付/退单',
     SENT: '已送达', NONE: '未回调'
   })[status] || status;
 

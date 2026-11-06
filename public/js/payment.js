@@ -3,6 +3,21 @@ document.addEventListener('DOMContentLoaded', () => {
   const countdown = document.querySelector('[data-countdown]');
   const payButton = document.querySelector('[data-pay-button]');
   const payForm = document.querySelector('.pay-form');
+  let submitting = false;
+
+  if (payForm && payButton) {
+    payForm.addEventListener('submit', (event) => {
+      if (submitting) {
+        event.preventDefault();
+        return;
+      }
+      submitting = true;
+      payForm.querySelectorAll('button[type="submit"]').forEach((button) => { button.disabled = true; });
+      payButton.textContent = '正在处理支付...';
+      payButton.setAttribute('aria-busy', 'true');
+    });
+  }
+
   if (!countdownBox || !countdown) return;
 
   const expiresAt = Number(countdownBox.getAttribute('data-expires'));

@@ -402,6 +402,13 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   response = await request(appBundle.app).get(`/pay/${submitTradeNo}`);
   assert.equal(response.status, 200);
   assert.match(response.text, /绑定的虚拟银行卡/);
+  response = await request(appBundle.app).get('/js/payment.js');
+  assert.equal(response.status, 200);
+  assert.match(response.text, /正在处理支付/);
+  const pendingOrderForRefresh = appBundle.db.prepare('SELECT id FROM orders WHERE trade_no = ?').get(submitTradeNo);
+  response = await admin.get(`/admin/orders/${pendingOrderForRefresh.id}`);
+  assert.equal(response.status, 200);
+  assert.match(response.text, /http-equiv="refresh" content="3"/);
   response = await request(appBundle.app).post(`/pay/${submitTradeNo}/confirm`).type('form').send({ pin: '135790' });
   assert.equal(response.status, 303);
   assert.match(response.headers.location, /trade_status=TRADE_SUCCESS/);
@@ -415,6 +422,7 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   assert.equal(response.headers['cache-control'], 'no-store');
   assert.match(response.text, /data-orders-live-url="\/admin\/orders\/live"/);
   assert.match(response.text, /\/js\/admin\.js\?v=1\./);
+  assert.doesNotMatch(response.text, /http-equiv="refresh"/);
 
   const unboundApi = signedOrderParams('roles-merchant-key', {
     notify_url: `${callbackBase}/notify`,

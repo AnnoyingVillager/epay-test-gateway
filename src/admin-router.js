@@ -176,7 +176,8 @@ function router({ db, config, notification, logger }) {
       stats,
       recentOrders,
       isAdmin,
-      ordersLiveFingerprint: orderFingerprint(req)
+      ordersLiveFingerprint: orderFingerprint(req),
+      autoRefreshSeconds: stats.pending > 0 ? 5 : null
     });
   });
 
@@ -480,7 +481,8 @@ function router({ db, config, notification, logger }) {
       status,
       search,
       isAdmin: req.user.role === 'admin',
-      ordersLiveFingerprint: orderFingerprint(req)
+      ordersLiveFingerprint: orderFingerprint(req),
+      autoRefreshSeconds: orders.some((order) => order.status === 'PENDING') ? 5 : null
     });
   });
 
@@ -507,7 +509,8 @@ function router({ db, config, notification, logger }) {
       logs,
       merchant: mapMerchant(merchant, config.appSecret),
       isAdmin: req.user.role === 'admin',
-      ordersLiveFingerprint: orderFingerprint(req)
+      ordersLiveFingerprint: orderFingerprint(req),
+      autoRefreshSeconds: order.status === 'PENDING' ? 3 : null
     });
   });
 
