@@ -17,9 +17,33 @@
 - SQLite 数据持久化，单容器部署
 - 多阶段 Dockerfile，GitHub Actions 自动构建 `linux/amd64` 与 `linux/arm64` 镜像
 
+## 已发布镜像
+
+- `ghcr.io/annoyingvillager/epay-test-gateway:latest`
+- `ghcr.io/annoyingvillager/epay-test-gateway:v1.0.0`（版本标签发布后可用）
+- 同时提供 `linux/amd64` 与 `linux/arm64` 多架构镜像
+
 ## 一键启动
 
-### Docker Compose（推荐）
+### Docker Compose（直接使用已发布镜像，推荐）
+
+```bash
+cp .env.example .env
+# 修改 .env 中的 ADMIN_PASSWORD、APP_SECRET、DEFAULT_MERCHANT_KEY
+docker compose -f docker-compose.ghcr.yml up -d
+```
+
+Windows PowerShell：
+
+```powershell
+Copy-Item .env.example .env
+notepad .env
+docker compose -f docker-compose.ghcr.yml up -d
+```
+
+该方式会自动拉取 GHCR 镜像，不要求本机具备源码构建环境。
+
+### Docker Compose（从源码构建）
 
 ```bash
 cp .env.example .env
@@ -42,22 +66,28 @@ docker compose up -d --build
 
 默认管理员账号来自 `ADMIN_USERNAME`，默认值为 `admin`。第一次启动前请把 `ADMIN_PASSWORD` 改成强密码。
 
-停止服务：
+停止服务（使用已发布镜像时）：
+
+```bash
+docker compose -f docker-compose.ghcr.yml down
+```
+
+停止服务（从源码构建时）：
 
 ```bash
 docker compose down
 ```
 
-保留数据的停止方式就是上面的默认方式。删除数据卷会清空所有虚拟卡和订单：
+两种方式都会保留数据卷。删除数据卷会清空所有虚拟卡和订单：
 
 ```bash
-docker compose down -v
+docker compose -f docker-compose.ghcr.yml down -v
 ```
 
 ### Docker CLI
 
 ```bash
-docker build -t epay-test-gateway:local .
+docker pull ghcr.io/annoyingvillager/epay-test-gateway:latest
 docker run -d \
   --name epay-test-gateway \
   --restart unless-stopped \
@@ -66,7 +96,13 @@ docker run -d \
   -e APP_SECRET='replace-with-random-secret' \
   -e DEFAULT_MERCHANT_KEY='replace-with-random-merchant-key' \
   -v epay_data:/app/data \
-  epay-test-gateway:local
+  ghcr.io/annoyingvillager/epay-test-gateway:latest
+```
+
+如需从源码构建，可改为：
+
+```bash
+docker build -t epay-test-gateway:local .
 ```
 
 生成随机密钥：

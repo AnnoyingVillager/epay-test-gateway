@@ -1,0 +1,34 @@
+services:
+  epay:
+    image: ghcr.io/annoyingvillager/epay-test-gateway:${EPAY_TAG:-latest}
+    pull_policy: always
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      DB_PATH: /app/data/epay.db
+      BASE_URL: ${BASE_URL:-}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me-now}
+      ADMIN_SESSION_HOURS: ${ADMIN_SESSION_HOURS:-12}
+      APP_SECRET: ${APP_SECRET:-change-this-app-secret-before-use}
+      DEFAULT_MERCHANT_PID: ${DEFAULT_MERCHANT_PID:-1001}
+      DEFAULT_MERCHANT_NAME: ${DEFAULT_MERCHANT_NAME:-Demo Merchant}
+      DEFAULT_MERCHANT_KEY: ${DEFAULT_MERCHANT_KEY:-test-merchant-key-change-me}
+      ORDER_TIMEOUT_SECONDS: ${ORDER_TIMEOUT_SECONDS:-900}
+      NOTIFY_RETRY_COUNT: ${NOTIFY_RETRY_COUNT:-3}
+      NOTIFY_TIMEOUT_MS: ${NOTIFY_TIMEOUT_MS:-8000}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    volumes:
+      - epay_data:/app/data
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  epay_data:
+    name: epay_test_gateway_data
