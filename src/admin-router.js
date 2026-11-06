@@ -93,6 +93,27 @@ function router({ db, config, notification, logger }) {
       : { condition: 'AND c.owner_user_id = ?', params: [req.user.id] };
   }
 
+  function orderFingerprint(req) {
+    const scope = orderScope(req);
+    const where = scope.condition ? `WHERE ${scope.condition}` : '';
+    const snapshot = db.prepare(`
+      SELECT
+        COUNT(*) AS total,
+        COALESCE(SUM(CASE WHEN o.status = 'PENDING' THEN 1 ELSE 0 END), 0) AS pending,
+        COALESCE(SUM(CASE WHEN o.status = 'PAID' THEN 1 ELSE 0 END), 0) AS paid,
+        COALESCE(SUM(CASE WHEN o.status IN ('FAILED', 'EXPIRED') THEN 1 ELSE 0 END), 0) AS failed,
+        COALESCE(SUM(CASE WHEN o.status = 'CHARGEBACK' THEN 1 ELSE 0 END), 0) AS chargeback,
+        COALESCE(MAX(o.paid_at), 0) AS last_paid,
+        COALESCE(MAX(o.closed_at), 0) AS last_closed,
+        COALESCE(MAX(o.notified_at), 0) AS last_notified,
+        COALESCE(MAX(o.notify_attempts), 0) AS max_notify_attempts,
+        COALESCE(SUM(CASE WHEN o.notify_state = 'SENT' THEN 1 ELSE 0 END), 0) AS sent_notifications
+      FROM orders o
+      ${where}
+    `).get(...scope.params);
+    return crypto.createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+  }
+
   route.get('/login', (req, res) => {
     const next = safeNext(req.query.next);
     if (userSessionFromRequest(req, db, config)) return res.redirect(next);
@@ -149,7 +170,13 @@ function router({ db, config, notification, logger }) {
     };
     const recentSql = orderQuery(orderWhere, orderParams, 8);
     const recentOrders = db.prepare(recentSql.sql).all(...recentSql.params).map(mapOrder);
-    res.render('admin/dashboard', { title: isAdmin ? '仪表盘' : '我的仪表盘', stats, recentOrders, isAdmin });
+    res.render('admin/dashboard', {
+      title: isAdmin ? '仪表盘' : '我的仪表盘',
+      stats,
+      recentOrders,
+      isAdmin,
+      ordersLiveFingerprint: orderFingerprint(req)
+    });
   });
 
   route.get('/bins', (req, res) => {
@@ -446,7 +473,18 @@ function router({ db, config, notification, logger }) {
     }
     const query = orderQuery(conditions.length ? `WHERE ${conditions.join(' AND ')}` : '', params, 500);
     const orders = db.prepare(query.sql).all(...query.params).map(mapOrder);
-    res.render('admin/orders', { title: req.user.role === 'admin' ? '订单管理' : '我的订单', orders, status, search, isAdmin: req.user.role === 'admin' });
+    res.render('admin/orders', {
+      title: req.user.role === 'admin' ? '订单管理' : '我的订单',
+      orders,
+      status,
+      search,
+      isAdmin: req.user.role === 'admin',
+      ordersLiveFingerprint: orderFingerprint(req)
+    });
+  });
+
+  route.get('/orders/live', (req, res) => {
+    res.set('Cache-Control', 'no-store').json({ fingerprint: orderFingerprint(req) });
   });
 
   route.get('/orders/:id', (req, res) => {
@@ -467,7 +505,8 @@ function router({ db, config, notification, logger }) {
       order,
       logs,
       merchant: mapMerchant(merchant, config.appSecret),
-      isAdmin: req.user.role === 'admin'
+      isAdmin: req.user.role === 'admin',
+      ordersLiveFingerprint: orderFingerprint(req)
     });
   });
 

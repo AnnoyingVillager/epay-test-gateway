@@ -239,6 +239,10 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   const admin = request.agent(appBundle.app);
   let response = await admin.post('/admin/login').type('form').send({ username: 'admin', password: 'test-admin-password' });
   assert.equal(response.status, 302);
+  response = await admin.get('/admin/orders/live');
+  assert.equal(response.status, 200);
+  const initialOrderFingerprint = response.body.fingerprint;
+  assert.match(initialOrderFingerprint, /^[a-f0-9]{64}$/);
 
   response = await admin.get('/admin/users');
   assert.equal(response.status, 200);
@@ -385,6 +389,13 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   assert.equal(response.status, 303);
   assert.match(response.headers.location, /trade_status=TRADE_SUCCESS/);
   assert.equal(appBundle.db.prepare('SELECT balance_minor FROM cards WHERE id = ?').get(cardId).balance_minor, 7766);
+  response = await admin.get('/admin/orders/live');
+  assert.equal(response.status, 200);
+  assert.notEqual(response.body.fingerprint, initialOrderFingerprint);
+  const paidOrderForRefresh = appBundle.db.prepare('SELECT id FROM orders WHERE trade_no = ?').get(submitTradeNo);
+  response = await admin.get(`/admin/orders/${paidOrderForRefresh.id}`);
+  assert.equal(response.status, 200);
+  assert.match(response.text, /data-orders-live-url="\/admin\/orders\/live"/);
 
   const unboundApi = signedOrderParams('roles-merchant-key', {
     notify_url: `${callbackBase}/notify`,

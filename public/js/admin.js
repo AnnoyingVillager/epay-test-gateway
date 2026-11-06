@@ -24,4 +24,37 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!window.confirm(form.getAttribute('data-confirm') || '确认继续？')) event.preventDefault();
     });
   });
+
+  const liveShell = document.querySelector('[data-orders-live-url]');
+  if (liveShell) {
+    const url = liveShell.getAttribute('data-orders-live-url');
+    const interval = Math.max(1500, Number(liveShell.getAttribute('data-orders-live-interval')) || 3000);
+    let fingerprint = liveShell.getAttribute('data-orders-live-fingerprint') || '';
+    let checking = false;
+
+    async function checkOrders() {
+      if (checking || document.hidden) return;
+      checking = true;
+      try {
+        const response = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+        if (!response.ok || response.redirected) return;
+        const data = await response.json();
+        if (!data.fingerprint) return;
+        if (fingerprint && data.fingerprint !== fingerprint) {
+          window.location.reload();
+          return;
+        }
+        fingerprint = data.fingerprint;
+      } catch {
+        // A transient polling failure should not interrupt the current page.
+      } finally {
+        checking = false;
+      }
+    }
+
+    setInterval(checkOrders, interval);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) checkOrders();
+    });
+  }
 });
