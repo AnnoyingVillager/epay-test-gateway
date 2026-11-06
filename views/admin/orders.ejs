@@ -1,0 +1,31 @@
+<%- include('../partials/head', { bodyClass: 'admin-page' }) %>
+<%- include('../partials/admin-start') %>
+<section class="panel">
+  <div class="toolbar">
+    <form method="get" action="/admin/orders" class="filter-form">
+      <label class="field inline-field"><span>状态</span><select name="status"><option value="">全部</option><% ['PENDING','PAID','FAILED','EXPIRED','CHARGEBACK'].forEach((item) => { %><option value="<%= item %>" <%= status === item ? 'selected' : '' %>><%= statusLabel(item) %></option><% }) %></select></label>
+      <label class="field inline-field"><span>搜索</span><input name="q" value="<%= search %>" placeholder="流水号 / 商户订单号 / PID"></label>
+      <button class="button button-ghost button-small" type="submit">筛选</button>
+    </form>
+    <span class="count-badge"><%= orders.length %> 条结果</span>
+  </div>
+  <% if (!orders.length) { %>
+    <div class="empty-state"><strong>没有匹配的订单</strong><p>通过 Epay API 创建订单后，会在这里显示支付状态和回调情况。</p></div>
+  <% } else { %>
+  <div class="table-wrap"><table><thead><tr><th>网关流水</th><th>商户 / 订单</th><th>金额</th><th>绑定卡</th><th>状态</th><th>回调</th><th>创建时间</th><th></th></tr></thead><tbody>
+    <% orders.forEach((order) => { %>
+      <tr>
+        <td><code><%= order.tradeNo %></code></td>
+        <td><strong><%= order.merchantName %></strong><br><small><%= order.outTradeNo %></small></td>
+        <td><strong><%= order.currency %> <%= formatMinor(order.moneyMinor) %></strong></td>
+        <td><%= order.cardLast4 ? `•••• ${order.cardLast4}` : '-' %></td>
+        <td><span class="pill pill-<%= order.status.toLowerCase() %>"><%= statusLabel(order.status) %></span></td>
+        <td><span class="pill <%= order.notifyState === 'SENT' ? 'pill-success' : order.notifyState === 'FAILED' ? 'pill-danger' : 'pill-muted' %>"><%= statusLabel(order.notifyState) %></span></td>
+        <td><%= formatDateTime(order.createdAt) %></td>
+        <td class="align-right"><a class="button button-ghost button-small" href="/admin/orders/<%= order.id %>">详情</a></td>
+      </tr>
+    <% }) %>
+  </tbody></table></div>
+  <% } %>
+</section>
+<%- include('../partials/admin-end') %>

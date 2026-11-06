@@ -1,0 +1,59 @@
+<%- include('../partials/head', { bodyClass: 'admin-page' }) %>
+<%- include('../partials/admin-start') %>
+<div class="detail-grid order-detail-grid">
+  <section class="panel">
+    <div class="panel-head"><div><p class="eyebrow">ORDER DETAIL</p><h2><%= order.name %></h2></div><span class="pill pill-<%= order.status.toLowerCase() %>"><%= statusLabel(order.status) %></span></div>
+    <div class="amount detail-amount"><small><%= order.currency %></small><%= formatMinor(order.moneyMinor) %></div>
+    <dl class="meta-list two-column">
+      <div><dt>网关流水</dt><dd><code><%= order.tradeNo %></code></dd></div>
+      <div><dt>商户订单号</dt><dd><code><%= order.outTradeNo %></code></dd></div>
+      <div><dt>商户</dt><dd><%= order.merchantName %> (<code><%= order.merchantPid %></code>)</dd></div>
+      <div><dt>支付类型</dt><dd><%= order.type %></dd></div>
+      <div><dt>绑定卡</dt><dd><% if (order.cardId) { %><a class="text-link" href="/admin/cards/<%= order.cardId %>"><%= order.cardId %></a><% } else { %>未绑定<% } %></dd></div>
+      <div><dt>创建时间</dt><dd><%= formatDateTime(order.createdAt) %></dd></div>
+      <div><dt>超时时间</dt><dd><%= formatDateTime(order.expiresAt) %></dd></div>
+      <div><dt>支付时间</dt><dd><%= order.paidAt ? formatDateTime(order.paidAt) : '-' %></dd></div>
+      <div><dt>客户端 IP</dt><dd><code><%= order.clientIp || '-' %></code></dd></div>
+      <div><dt>创建入口</dt><dd><%= order.createdVia %></dd></div>
+    </dl>
+    <div class="url-block"><span>notify_url</span><code><%= order.notifyUrl %></code></div>
+    <div class="url-block"><span>return_url</span><code><%= order.returnUrl %></code></div>
+    <% if (order.param) { %><div class="url-block"><span>param</span><code><%= order.param %></code></div><% } %>
+    <div class="button-row">
+      <form method="post" action="/admin/orders/<%= order.id %>/resend"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-ghost" type="submit">重新发送回调</button></form>
+      <% if (order.status === 'PAID') { %><form method="post" action="/admin/orders/<%= order.id %>/chargeback" data-confirm="确认模拟拒付/退单？金额将退回虚拟卡。"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-danger" type="submit">模拟拒付 / 退单</button></form><% } %>
+      <a class="button button-ghost" href="/pay/<%= encodeURIComponent(order.tradeNo) %>" target="_blank" rel="noopener">查看支付页</a>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <div class="panel-head"><div><p class="eyebrow">CALLBACK STATUS</p><h2>回调状态</h2></div></div>
+    <div class="callback-state">
+      <span class="pill <%= order.notifyState === 'SENT' ? 'pill-success' : order.notifyState === 'FAILED' ? 'pill-danger' : 'pill-muted' %>"><%= statusLabel(order.notifyState) %></span>
+      <strong><%= order.notifyAttempts %> 次尝试</strong>
+      <p><%= order.notifiedAt ? `最近成功：${formatDateTime(order.notifiedAt)}` : '尚未成功送达商户' %></p>
+      <% if (order.notifyLastError) { %><code class="error-text"><%= order.notifyLastError %></code><% } %>
+    </div>
+    <dl class="meta-list">
+      <div><dt>回调事件</dt><dd><code><%= order.callbackEvent || '-' %></code></dd></div>
+      <div><dt>商户 PID</dt><dd><code><%= merchant.pid %></code></dd></div>
+      <div><dt>签名方式</dt><dd>MD5</dd></div>
+      <div><dt>商户密钥</dt><dd><code class="break-all"><%= merchant.key %></code><button type="button" class="copy-button" data-copy="<%= merchant.key %>">复制</button></dd></div>
+    </dl>
+    <div class="alert alert-info">商户的 notify 接口返回纯文本 <code>success</code> 时，回调才会被标记为已送达。</div>
+  </aside>
+</div>
+
+<section class="panel">
+  <div class="panel-head"><div><p class="eyebrow">CALLBACK LOGS</p><h2>回调记录</h2></div><span class="count-badge"><%= logs.length %></span></div>
+  <% if (!logs.length) { %>
+    <div class="empty-state compact">尚未触发回调。</div>
+  <% } else { %>
+  <div class="table-wrap"><table><thead><tr><th>时间</th><th>事件</th><th>结果</th><th>HTTP</th><th>响应 / 错误</th></tr></thead><tbody>
+    <% logs.forEach((log) => { %>
+      <tr><td><%= formatDateTime(log.attempted_at) %></td><td><code><%= log.event %></code></td><td><span class="pill <%= log.success ? 'pill-success' : 'pill-danger' %>"><%= log.success ? '成功' : '失败' %></span></td><td><%= log.status_code || '-' %></td><td><code class="break-all"><%= log.error || log.response_body || '-' %></code></td></tr>
+    <% }) %>
+  </tbody></table></div>
+  <% } %>
+</section>
+<%- include('../partials/admin-end') %>

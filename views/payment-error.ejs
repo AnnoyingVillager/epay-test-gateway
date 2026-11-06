@@ -1,0 +1,16 @@
+<%- include('partials/head', { bodyClass: 'checkout-page' }) %>
+<main class="message-shell">
+  <section class="message-card">
+    <div class="message-icon">!</div>
+    <p class="eyebrow">PAYMENT ERROR · <%= code %></p>
+    <h1><%= title %></h1>
+    <p><%= message %></p>
+    <div class="message-actions">
+      <% if (returnUrl) { %><a class="button button-primary" href="<%= returnUrl %>">返回商户网站</a><% } %>
+      <a class="button button-ghost" href="/">返回首页</a>
+    </div>
+  </section>
+</main>
+<footer class="public-footer"><span>Epay Test Gateway</span><span>Sandbox only</span></footer>
+</body>
+</html>

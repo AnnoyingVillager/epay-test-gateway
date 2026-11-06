@@ -1,0 +1,337 @@
+# Epay Test Gateway
+
+一个自托管、面向开发联调与自动化测试的 Epay 兼容网关。内置虚拟银行卡、卡 BIN、3DS 密码、余额、订单超时、模拟拒付/退单、异步回调和管理面板。
+
+> **仅用于测试环境。** 本项目不会连接真实银行或支付网络，也不应处理真实银行卡、密码或生产资金。
+
+## 功能
+
+- 兼容常见 Epay 风格的 `/submit.php`、`/api.php`、`/mapi.php` 与 MD5 签名流程
+- 管理面板：仪表盘、虚拟卡、卡 BIN、订单、商户、系统设置
+- 创建符合 Luhn 校验的虚拟卡号，支持自定义 BIN 前缀、品牌、卡号长度
+- 修改虚拟卡余额、有效期、CVV、3DS 密码和状态
+- 一键“模拟拒付”，并可模拟已支付订单的拒付/退单
+- 订单绑卡：支付页只显示并接受订单指定的虚拟卡
+- 订单超时倒计时、自动过期和服务端二次校验
+- 支付成功、失败、超时、拒付均生成签名回调；成功或失败都按 Epay 参数返回商户
+- SQLite 数据持久化，单容器部署
+- 多阶段 Dockerfile，GitHub Actions 自动构建 `linux/amd64` 与 `linux/arm64` 镜像
+
+## 一键启动
+
+### Docker Compose（推荐）
+
+```bash
+cp .env.example .env
+# 修改 .env 中的 ADMIN_PASSWORD、APP_SECRET、DEFAULT_MERCHANT_KEY
+docker compose up -d --build
+```
+
+Windows PowerShell：
+
+```powershell
+Copy-Item .env.example .env
+notepad .env
+docker compose up -d --build
+```
+
+打开：
+
+- 管理面板：<http://localhost:3000/admin>
+- 健康检查：<http://localhost:3000/healthz>
+
+默认管理员账号来自 `ADMIN_USERNAME`，默认值为 `admin`。第一次启动前请把 `ADMIN_PASSWORD` 改成强密码。
+
+停止服务：
+
+```bash
+docker compose down
+```
+
+保留数据的停止方式就是上面的默认方式。删除数据卷会清空所有虚拟卡和订单：
+
+```bash
+docker compose down -v
+```
+
+### Docker CLI
+
+```bash
+docker build -t epay-test-gateway:local .
+docker run -d \
+  --name epay-test-gateway \
+  --restart unless-stopped \
+  -p 3000:3000 \
+  -e ADMIN_PASSWORD='replace-me' \
+  -e APP_SECRET='replace-with-random-secret' \
+  -e DEFAULT_MERCHANT_KEY='replace-with-random-merchant-key' \
+  -v epay_data:/app/data \
+  epay-test-gateway:local
+```
+
+生成随机密钥：
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+## 首次配置
+
+1. 登录管理面板。
+2. 打开 **卡 BIN**，创建例如 `424242`、长度 16 的测试 BIN。
+3. 打开 **虚拟卡 → 创建虚拟卡**，设置余额和 3DS 密码。
+4. 进入卡片详情，复制 `CARD-...` 卡片 ID。
+5. 使用该 ID 作为商户下单参数 `bind_card`。
+6. 用 `/api.php` 或 `/submit.php` 发起订单，打开返回的支付页。
+7. 输入卡片详情中的 3DS 密码完成支付；后台可以切换“模拟拒付”。
+
+## 商户接入
+
+默认首次启动会创建一个商户：
+
+| 配置 | 默认值 |
+| --- | --- |
+| PID | `1001` |
+| 名称 | `Demo Merchant` |
+| MD5 密钥 | `test-merchant-key-change-me` |
+
+可在 **商户管理** 查看或轮换密钥。
+
+### API 创建订单
+
+```http
+GET /api.php?act=order&pid=1001&type=alipay
+  &out_trade_no=ORDER-001
+  &notify_url=https://merchant.example.com/epay/notify
+  &return_url=https://merchant.example.com/epay/return
+  &name=Test+Order
+  &money=10.00
+  &sitename=Demo+Shop
+  &bind_card=CARD-1234567890
+  &timeout=900
+  &sign=<MD5>
+  &sign_type=MD5
+```
+
+成功响应示例：
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "trade_no": "T20261106120000A1B2C3D4E5",
+  "out_trade_no": "ORDER-001",
+  "payurl": "http://localhost:3000/pay/T20261106120000A1B2C3D4E5",
+  "urlscheme": "http://localhost:3000/pay/T20261106120000A1B2C3D4E5",
+  "qrcode": "http://localhost:3000/pay/T20261106120000A1B2C3D4E5",
+  "money": "10.00",
+  "status": "pending"
+}
+```
+
+错误响应：
+
+```json
+{ "code": -1, "msg": "Invalid signature", "errcode": "SIGN_ERROR" }
+```
+
+`/mapi.php` 是 `/api.php` 的别名。
+
+### 浏览器提交订单
+
+`GET` 或 `POST /submit.php`，参数与 API 相同，但不要求 `act`。成功时返回 `302` 跳转到支付页。
+
+### 扩展参数
+
+| 参数 | 必填 | 说明 |
+| --- | --- | --- |
+| `bind_card` | 默认必填 | 虚拟卡 ID，例如 `CARD-AB12CD34EF`；也可使用别名 `card_id` |
+| `timeout` | 否 | 订单超时秒数，范围 60-86400 |
+| `expires_in` | 否 | `timeout` 的别名 |
+| `param` | 否 | 商户透传参数，会原样出现在回调中 |
+| `sitename` | 否 | 站点名称 |
+
+这些扩展参数都需要参与签名。系统设置中可以关闭“强制订单绑定虚拟卡”，但不建议在测试流程中关闭。
+
+### 签名算法
+
+1. 取所有请求参数，排除 `sign` 和 `sign_type`，忽略空值。
+2. 按参数名 ASCII 升序排列。
+3. 拼接为 `key1=value1&key2=value2...`。
+4. 末尾直接追加商户 MD5 密钥。
+5. 对完整字符串计算小写 MD5。
+
+Node.js 示例：
+
+```js
+const crypto = require('node:crypto');
+
+function makeSign(params, key) {
+  const canonical = Object.entries(params)
+    .filter(([k, v]) => k !== 'sign' && k !== 'sign_type' && v !== '')
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}=${v}`)
+    .join('&');
+  return crypto.createHash('md5').update(canonical + key).digest('hex');
+}
+```
+
+仓库内提供了完整测试脚本：
+
+```bash
+BASE_URL=http://localhost:3000 \
+MERCHANT_PID=1001 \
+MERCHANT_KEY=test-merchant-key-change-me \
+BIND_CARD=CARD-XXXXXXXXXX \
+npm run test:merchant
+```
+
+默认通知地址是 `/merchant-notify`，该路径没有内置处理逻辑。正式联调时请通过 `NOTIFY_URL` 指向你自己的服务。
+
+## 回调与返回规则
+
+### 支付成功
+
+异步通知和同步返回都包含：
+
+```text
+pid, trade_no, out_trade_no, type, name, money, trade_status=TRADE_SUCCESS,
+sign, sign_type=MD5
+```
+
+商户的 `notify_url` 必须返回纯文本 `success`，否则网关会按 `NOTIFY_RETRY_COUNT` 重试并记录失败原因。
+
+### 支付失败 / 超时
+
+支付失败或订单过期时，网关使用 Epay 风格扩展状态：
+
+```text
+trade_status=TRADE_CLOSED
+errcode=CARD_DECLINED | INSUFFICIENT_FUNDS | CARD_EXPIRED | PAYMENT_FAILED | ORDER_EXPIRED
+errmsg=...
+sign=...
+sign_type=MD5
+```
+
+同步返回会附带相同参数并跳回 `return_url`；异步通知会发送到 `notify_url`。
+
+### 模拟拒付 / 退单
+
+已支付订单可在订单详情中点击“模拟拒付 / 退单”，金额会退回虚拟卡。回调额外包含：
+
+```text
+trade_status=TRADE_CLOSED
+refund_status=REFUND_SUCCESS
+errcode=CHARGEBACK
+```
+
+> 不同 Epay 实现的拒付/退款扩展字段可能不同。如果你的商户系统只支持标准成功通知，请不要依赖本项目的失败/拒付同步逻辑。
+
+## 支付失败场景
+
+在后台或测试流程中可以触发以下结果：
+
+- 卡片状态设置为“模拟拒付”或“冻结”
+- 3DS 密码错误（订单仍可重试）
+- 卡内余额不足
+- 卡片有效期已过
+- 订单超过 `timeout` / `expires_in` 时间
+- 已支付订单手动模拟拒付/退单
+
+## 管理面板概览
+
+- **仪表盘**：卡片余额、成功交易额、待支付/失败订单
+- **虚拟卡**：完整测试卡号、CVV、3DS 密码、余额、状态、卡片流水
+- **卡 BIN**：BIN 前缀、品牌、卡类型、国家、卡号长度
+- **订单**：支付状态、绑定卡、回调状态、回调日志、手动重发
+- **商户**：PID、MD5 密钥、启停、密钥轮换
+- **设置**：站点名称、默认超时、结算货币、支付类型、强制绑卡
+
+## 环境变量
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `PORT` | `3000` | 容器内监听端口 |
+| `APP_PORT` | `3000` | Docker Compose 映射到宿主机的端口 |
+| `BASE_URL` | 空 | 对外公开地址；为空时根据请求自动识别 |
+| `DB_PATH` | `/app/data/epay.db` | SQLite 数据库文件 |
+| `ADMIN_USERNAME` | `admin` | 管理员账号 |
+| `ADMIN_PASSWORD` | `change-me-now` | 管理员密码，必须修改 |
+| `ADMIN_SESSION_HOURS` | `12` | 管理会话有效期 |
+| `APP_SECRET` | 开发回退值 | 会话与卡片数据加密密钥，生产必须设置 |
+| `DEFAULT_MERCHANT_PID` | `1001` | 首次启动创建的商户 PID |
+| `DEFAULT_MERCHANT_NAME` | `Demo Merchant` | 首次启动创建的商户名称 |
+| `DEFAULT_MERCHANT_KEY` | `test-merchant-key-change-me` | 首次启动创建的商户密钥 |
+| `ORDER_TIMEOUT_SECONDS` | `900` | 默认订单超时 |
+| `NOTIFY_RETRY_COUNT` | `3` | 回调额外重试次数 |
+| `NOTIFY_TIMEOUT_MS` | `8000` | 单次回调 HTTP 超时 |
+| `TRUST_PROXY` | `false` | 反向代理后设为 `true` |
+| `COOKIE_SECURE` | `false` | HTTPS 部署时设为 `true` |
+
+`DEFAULT_MERCHANT_*` 只在数据库没有商户时用于首次初始化。之后请在管理面板维护。
+
+## 数据持久化与备份
+
+Docker Compose 使用命名卷 `epay_test_gateway_data` 挂载到 `/app/data`。备份示例：
+
+```bash
+docker compose exec epay sh -c 'cp /app/data/epay.db /app/data/epay.backup.db'
+docker cp epay-test-gateway:/app/data/epay.backup.db ./epay.backup.db
+```
+
+同一目录下还可能出现 SQLite WAL/SHM 文件。复制备份时应停止容器，或使用 SQLite 的在线备份能力。
+
+## 本地开发
+
+需要 Node.js 24+（使用内置 `node:sqlite`）。
+
+```bash
+npm install
+npm run dev
+```
+
+测试：
+
+```bash
+npm test
+```
+
+## 发布到 GitHub 与 Docker 镜像
+
+仓库已包含 `.github/workflows/docker.yml`。推送 `main` 分支会构建并推送 `ghcr.io/<owner>/<repo>:latest`；推送 `v1.0.0` 这类标签会额外生成版本标签。
+
+```bash
+git init -b main
+git add .
+git commit -m "feat: add Epay test gateway"
+gh auth login
+gh repo create epay-test-gateway --public --source=. --remote=origin --push
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+首次使用 GHCR 时，Actions 使用仓库的 `GITHUB_TOKEN` 推送。部署机器拉取公开镜像：
+
+```bash
+docker pull ghcr.io/<owner>/epay-test-gateway:latest
+```
+
+如果包不是公开的，需要先在 GitHub Package settings 中调整可见性，或执行 `docker login ghcr.io`。
+
+## 安全说明
+
+- 此项目故意展示和修改测试虚拟卡信息。不要用于真实银行卡。
+- 修改默认管理员密码、`APP_SECRET` 和商户密钥。
+- 对外暴露时使用 HTTPS 反向代理，并设置 `COOKIE_SECURE=true`、`TRUST_PROXY=true`。
+- 为管理面板增加网络访问限制或 VPN。
+- 卡片号、CVV 和 3DS 密码使用 AES-256-GCM 加密后存储；加密密钥从 `APP_SECRET` 派生。
+- 管理表单具有 CSRF 防护、登录限流和单次支付限流。
+- 不使用本项目处理真实持卡人数据。
+
+## 兼容性说明
+
+本项目实现的是常见“彩虹易支付”风格的自建 Epay 接口约定，包括 `pid`、`type`、`out_trade_no`、`notify_url`、`return_url`、`name`、`money`、MD5 签名、`trade_status=TRADE_SUCCESS` 与商户返回 `success`。不同 Epay 服务商对失败回调、退款/拒付字段可能有差异，详见 [API 文档](docs/EPAY_API.md)。
+
+## License
+
+MIT

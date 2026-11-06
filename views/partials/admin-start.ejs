@@ -1,0 +1,30 @@
+<header class="admin-topbar">
+  <div class="admin-topbar-inner">
+    <a class="brand" href="/admin">
+      <span class="brand-mark">E</span>
+      <span><strong>Epay</strong><small>Test Gateway</small></span>
+    </a>
+    <button class="nav-toggle" type="button" aria-label="展开导航" data-nav-toggle>菜单</button>
+    <nav class="admin-nav" data-admin-nav>
+      <a class="<%= currentPath === '/admin' ? 'active' : '' %>" href="/admin">仪表盘</a>
+      <a class="<%= currentPath.startsWith('/admin/cards') ? 'active' : '' %>" href="/admin/cards">虚拟卡</a>
+      <a class="<%= currentPath.startsWith('/admin/bins') ? 'active' : '' %>" href="/admin/bins">卡 BIN</a>
+      <a class="<%= currentPath.startsWith('/admin/orders') ? 'active' : '' %>" href="/admin/orders">订单</a>
+      <a class="<%= currentPath.startsWith('/admin/merchants') ? 'active' : '' %>" href="/admin/merchants">商户</a>
+      <a class="<%= currentPath.startsWith('/admin/settings') ? 'active' : '' %>" href="/admin/settings">设置</a>
+    </nav>
+    <div class="topbar-actions">
+      <span class="site-label"><%= siteName %></span>
+      <a class="text-link" href="/admin/logout">退出</a>
+    </div>
+  </div>
+</header>
+<main class="admin-shell">
+  <div class="page-heading">
+    <div>
+      <p class="eyebrow">管理控制台</p>
+      <h1><%= title %></h1>
+    </div>
+    <div class="page-heading-actions"><%- typeof pageActions !== 'undefined' ? pageActions : '' %></div>
+  </div>
+  <%- include('flash') %>

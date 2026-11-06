@@ -1,0 +1,35 @@
+<%- include('../partials/head', { bodyClass: 'admin-page' }) %>
+<%- include('../partials/admin-start') %>
+<div class="detail-grid settings-grid">
+  <section class="panel">
+    <div class="panel-head"><div><p class="eyebrow">GATEWAY SETTINGS</p><h2>支付设置</h2></div></div>
+    <form method="post" action="/admin/settings" class="stack-form">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label class="field"><span>站点名称</span><input name="site_name" value="<%= settings.site_name %>" maxlength="80" required></label>
+      <div class="form-row">
+        <label class="field"><span>默认订单超时（秒）</span><input type="number" name="order_timeout_seconds" min="60" max="86400" value="<%= settings.order_timeout_seconds %>" required></label>
+        <label class="field"><span>默认结算货币</span><input name="default_currency" value="<%= settings.default_currency %>" maxlength="3" pattern="[A-Za-z]{3}" required></label>
+      </div>
+      <label class="field"><span>支持的支付类型</span><input name="supported_types" value="<%= settings.supported_types %>" required placeholder="alipay,wxpay,qqpay"></label>
+      <label class="field checkbox-field"><input type="checkbox" name="require_card_binding" value="1" <%= settings.require_card_binding === '1' ? 'checked' : '' %>><span>强制订单绑定虚拟卡</span></label>
+      <div class="form-actions"><button class="button button-primary" type="submit">保存系统设置</button></div>
+    </form>
+    <p class="form-hint">商户也可通过订单参数 <code>timeout</code> 或 <code>expires_in</code> 覆盖超时时间，范围 60-86400 秒。该参数需要参与签名。</p>
+  </section>
+
+  <aside class="panel">
+    <div class="panel-head"><div><p class="eyebrow">DEPLOYMENT</p><h2>部署信息</h2></div></div>
+    <dl class="meta-list">
+      <div><dt>公开地址</dt><dd><code><%= config.baseUrl || '自动识别请求 Host' %></code></dd></div>
+      <div><dt>提交入口</dt><dd><code>/submit.php</code></dd></div>
+      <div><dt>API 入口</dt><dd><code>/api.php</code></dd></div>
+      <div><dt>数据库</dt><dd><code><%= config.databasePath %></code></dd></div>
+      <div><dt>管理员账号</dt><dd><code><%= config.adminUsername %></code></dd></div>
+      <div><dt>会话有效期</dt><dd><%= config.adminSessionHours %> 小时</dd></div>
+      <div><dt>回调重试</dt><dd><%= config.notifyRetryCount %> 次</dd></div>
+    </dl>
+    <div class="alert alert-warning"><strong>生产环境提示：</strong>此网关只用于测试。请务必设置随机 <code>APP_SECRET</code>、强 <code>ADMIN_PASSWORD</code>，并通过 HTTPS 反向代理对外提供服务。</div>
+    <div class="alert alert-info">签名算法：参数按键名 ASCII 升序排列，忽略空值和 <code>sign</code>/<code>sign_type</code>，拼接 <code>&amp;key=商户密钥</code> 后计算小写 MD5。</div>
+  </aside>
+</div>
+<%- include('../partials/admin-end') %>

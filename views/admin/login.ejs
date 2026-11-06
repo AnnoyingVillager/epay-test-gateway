@@ -1,0 +1,40 @@
+<%- include('../partials/head', { bodyClass: 'login-page' }) %>
+<main class="login-shell">
+  <section class="login-panel">
+    <div class="login-brand">
+      <span class="brand-mark">E</span>
+      <span><strong>Epay</strong><small>Test Gateway</small></span>
+    </div>
+    <p class="eyebrow">ADMIN CONSOLE</p>
+    <h1>管理后台登录</h1>
+    <p class="login-subtitle">管理虚拟卡、卡 BIN、商户、订单与支付回调。</p>
+    <% if (error) { %><div class="alert alert-danger"><%= error %></div><% } %>
+    <form method="post" action="/admin/login" class="stack-form">
+      <label class="field">
+        <span>管理员账号</span>
+        <input type="text" name="username" autocomplete="username" required autofocus placeholder="admin">
+      </label>
+      <label class="field">
+        <span>管理员密码</span>
+        <input type="password" name="password" autocomplete="current-password" required placeholder="输入 ADMIN_PASSWORD">
+      </label>
+      <button class="button button-primary button-block" type="submit">登录管理面板</button>
+    </form>
+    <p class="login-hint">账号密码由 <code>ADMIN_USERNAME</code> 与 <code>ADMIN_PASSWORD</code> 环境变量配置。</p>
+  </section>
+  <aside class="login-aside">
+    <div class="login-aside-copy">
+      <span class="status-dot">SELF-HOSTED</span>
+      <h2>一个专为支付联调设计的沙箱。</h2>
+      <ul>
+        <li>Luhn 校验虚拟卡与自定义 BIN</li>
+        <li>余额、3DS 密码、拒付状态控制</li>
+        <li>订单倒计时与签名回调</li>
+        <li>SQLite 数据持久化</li>
+      </ul>
+    </div>
+  </aside>
+</main>
+</body>
+</html>
+

@@ -1,0 +1,26 @@
+{
+  "name": "epay-test-gateway",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A self-hosted Epay-compatible test gateway with virtual cards and an admin panel.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test --test-concurrency=1 tests/integration.test.js",
+    "test:merchant": "node scripts/merchant-smoke.js"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "ejs": "^3.1.10",
+    "express": "^5.3.0",
+    "express-rate-limit": "^8.2.1",
+    "helmet": "^8.1.0"
+  },
+  "devDependencies": {
+    "supertest": "^7.1.4"
+  }
+}

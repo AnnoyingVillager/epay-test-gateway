@@ -1,0 +1,82 @@
+<%- include('../partials/head', { bodyClass: 'admin-page' }) %>
+<%- include('../partials/admin-start') %>
+<div class="detail-grid">
+  <section class="panel card-visual-panel">
+    <div class="virtual-card large-card <%= card.status !== 'active' ? 'virtual-card-muted' : '' %>">
+      <div class="virtual-card-top"><span><%= card.brand %></span><span><%= card.cardType %></span></div>
+      <div class="card-number"><%= card.cardNumber.replace(/(.{4})/g, '$1 ').trim() %></div>
+      <div class="virtual-card-bottom">
+        <span>VALID THRU <strong><%= String(card.expiresMonth).padStart(2, '0') %>/<%= String(card.expiresYear).slice(-2) %></strong></span>
+        <span class="card-network">EPAY</span>
+      </div>
+    </div>
+    <div class="card-info-grid">
+      <div><span>卡片 ID</span><code><%= card.id %></code><button type="button" class="copy-button" data-copy="<%= card.id %>">复制</button></div>
+      <div><span>卡号</span><code><%= card.cardNumber %></code><button type="button" class="copy-button" data-copy="<%= card.cardNumber %>">复制</button></div>
+      <div><span>3DS 密码</span><code><%= card.pin %></code><button type="button" class="copy-button" data-copy="<%= card.pin %>">复制</button></div>
+      <div><span>CVV</span><code><%= card.cvv %></code><button type="button" class="copy-button" data-copy="<%= card.cvv %>">复制</button></div>
+    </div>
+    <div class="alert alert-info"><strong>绑定参数：</strong>商户下单时传入 <code>bind_card=<%= card.id %></code>，支付页将只允许使用这张卡。</div>
+    <div class="button-row">
+      <form method="post" action="/admin/cards/<%= card.id %>/decline">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="reason" value="模拟拒付">
+        <button class="button <%= card.status === 'declined' ? 'button-primary' : 'button-danger' %>" type="submit"><%= card.status === 'declined' ? '恢复可支付' : '模拟拒付' %></button>
+      </form>
+      <a class="button button-ghost" href="/admin/orders?q=<%= encodeURIComponent(card.id) %>">查看卡片订单</a>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><div><p class="eyebrow">CARD SETTINGS</p><h2>修改卡片</h2></div><span class="pill <%= card.status === 'active' ? 'pill-success' : 'pill-danger' %>"><%= statusLabel(card.status) %></span></div>
+    <form method="post" action="/admin/cards/<%= card.id %>/update" class="stack-form">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="form-row">
+        <label class="field"><span>余额</span><input type="number" name="balance" min="0" step="0.01" value="<%= formatMinor(card.balanceMinor) %>" required></label>
+        <label class="field"><span>状态</span><select name="status"><option value="active" <%= card.status === 'active' ? 'selected' : '' %>>可支付</option><option value="declined" <%= card.status === 'declined' ? 'selected' : '' %>>模拟拒付</option><option value="frozen" <%= card.status === 'frozen' ? 'selected' : '' %>>冻结</option></select></label>
+      </div>
+      <label class="field"><span>拒付原因</span><input name="decline_reason" value="<%= card.declineReason || '风控拒绝' %>"></label>
+      <div class="form-row">
+        <label class="field"><span>有效期月份</span><input type="number" name="expires_month" min="1" max="12" value="<%= card.expiresMonth %>" required></label>
+        <label class="field"><span>有效期年份</span><input type="number" name="expires_year" min="2020" max="2099" value="<%= card.expiresYear %>" required></label>
+      </div>
+      <div class="form-row">
+        <label class="field"><span>3DS 密码</span><input type="text" name="pin" minlength="4" maxlength="64" value="<%= card.pin %>" required></label>
+        <label class="field"><span>CVV</span><input type="text" name="cvv" pattern="\d{3,4}" value="<%= card.cvv %>" required></label>
+      </div>
+      <div class="form-actions"><button class="button button-primary" type="submit">保存卡片设置</button></div>
+    </form>
+    <dl class="meta-list">
+      <div><dt>卡 BIN</dt><dd><%= card.binName %> · <code><%= card.binPrefix %></code></dd></div>
+      <div><dt>创建时间</dt><dd><%= formatDateTime(card.createdAt) %></dd></div>
+      <div><dt>最后使用</dt><dd><%= card.lastUsedAt ? formatDateTime(card.lastUsedAt) : '尚未使用' %></dd></div>
+    </dl>
+  </section>
+</div>
+
+<section class="panel">
+  <div class="panel-head"><div><p class="eyebrow">LEDGER</p><h2>卡片流水</h2></div><span class="count-badge"><%= transactions.length %></span></div>
+  <% if (!transactions.length) { %>
+    <div class="empty-state compact">暂无卡片流水。</div>
+  <% } else { %>
+  <div class="table-wrap"><table><thead><tr><th>时间</th><th>类型</th><th>金额</th><th>操作后余额</th><th>说明</th><th>订单</th></tr></thead><tbody>
+    <% transactions.forEach((tx) => { %>
+      <tr><td><%= formatDateTime(tx.created_at) %></td><td><span class="pill pill-muted"><%= tx.type %></span></td><td><strong><%= formatMinor(tx.amount_minor) %></strong></td><td><%= formatMinor(tx.balance_after_minor) %></td><td><%= tx.note || '-' %></td><td><% if (tx.trade_no) { %><code><%= tx.trade_no %></code><% } else { %>-<% } %></td></tr>
+    <% }) %>
+  </tbody></table></div>
+  <% } %>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><div><p class="eyebrow">ORDERS</p><h2>关联订单</h2></div></div>
+  <% if (!orders.length) { %>
+    <div class="empty-state compact">暂无关联订单。</div>
+  <% } else { %>
+  <div class="table-wrap"><table><thead><tr><th>流水号</th><th>商户订单号</th><th>金额</th><th>状态</th><th>时间</th><th></th></tr></thead><tbody>
+    <% orders.forEach((order) => { %>
+      <tr><td><code><%= order.tradeNo %></code></td><td><%= order.outTradeNo %></td><td><%= order.currency %> <%= formatMinor(order.moneyMinor) %></td><td><span class="pill pill-<%= order.status.toLowerCase() %>"><%= statusLabel(order.status) %></span></td><td><%= formatDateTime(order.createdAt) %></td><td class="align-right"><a class="text-link" href="/admin/orders/<%= order.id %>">详情</a></td></tr>
+    <% }) %>
+  </tbody></table></div>
+  <% } %>
+</section>
+<%- include('../partials/admin-end') %>

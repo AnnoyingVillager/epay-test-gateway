@@ -1,0 +1,50 @@
+<%- include('../partials/head', { bodyClass: 'admin-page' }) %>
+<%- include('../partials/admin-start') %>
+<div class="split-layout">
+  <section class="panel">
+    <div class="panel-head"><div><p class="eyebrow">MERCHANTS</p><h2>商户账号</h2></div><span class="count-badge"><%= merchants.length %></span></div>
+    <div class="stack-list">
+      <% merchants.forEach((merchant) => { %>
+      <article class="list-card merchant-card">
+        <div class="list-card-main">
+          <div class="merchant-avatar"><%= merchant.name.slice(0, 1).toUpperCase() %></div>
+          <div>
+            <strong><%= merchant.name %></strong>
+            <p>PID <code><%= merchant.pid %></code> · 创建于 <%= formatDateTime(merchant.createdAt) %></p>
+          </div>
+        </div>
+        <div class="list-card-side"><span class="pill <%= merchant.isActive ? 'pill-success' : 'pill-muted' %>"><%= merchant.isActive ? '启用' : '停用' %></span></div>
+        <div class="secret-row"><span>MD5 密钥</span><code class="break-all"><%= merchant.key %></code><button type="button" class="copy-button" data-copy="<%= merchant.key %>">复制</button></div>
+        <details class="inline-details">
+          <summary>管理与轮换</summary>
+          <div class="details-grid">
+            <form method="post" action="/admin/merchants/<%= merchant.id %>/update" class="form-grid compact-grid">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <label class="field"><span>商户名称</span><input name="name" value="<%= merchant.name %>" required></label>
+              <label class="field checkbox-field"><input type="checkbox" name="is_active" value="1" <%= merchant.isActive ? 'checked' : '' %>><span>启用商户</span></label>
+              <div class="form-actions"><button class="button button-primary button-small" type="submit">保存</button></div>
+            </form>
+            <form method="post" action="/admin/merchants/<%= merchant.id %>/rotate" data-confirm="轮换后旧密钥立即失效，确认继续？" class="rotate-form">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="button button-danger button-small" type="submit">轮换密钥</button>
+            </form>
+          </div>
+        </details>
+      </article>
+      <% }) %>
+    </div>
+  </section>
+
+  <aside class="panel sticky-panel">
+    <div class="panel-head"><div><p class="eyebrow">NEW MERCHANT</p><h2>创建商户</h2></div></div>
+    <form method="post" action="/admin/merchants" class="stack-form">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label class="field"><span>商户 PID</span><input name="pid" pattern="[A-Za-z0-9_-]{2,32}" required placeholder="例如：1002"></label>
+      <label class="field"><span>商户名称</span><input name="name" required placeholder="例如：测试商城"></label>
+      <label class="field"><span>MD5 密钥</span><input name="key" minlength="8" placeholder="留空自动生成"></label>
+      <button class="button button-primary button-block" type="submit">创建商户</button>
+      <p class="form-hint">商户下单时必须使用 PID 与密钥计算 Epay MD5 签名。</p>
+    </form>
+  </aside>
+</div>
+<%- include('../partials/admin-end') %>

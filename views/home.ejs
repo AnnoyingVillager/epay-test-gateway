@@ -1,0 +1,79 @@
+<%- include('partials/head', { bodyClass: 'public-page' }) %>
+<main class="public-shell">
+  <nav class="public-nav">
+    <a class="brand" href="/">
+      <span class="brand-mark">E</span>
+      <span><strong>Epay</strong><small>Test Gateway</small></span>
+    </a>
+    <div class="public-nav-actions">
+      <a class="button button-ghost" href="/api.php?act=order">API</a>
+      <a class="button button-dark" href="<%= hasAdminSession ? '/admin' : '/admin/login' %>"><%= hasAdminSession ? '进入后台' : '管理登录' %></a>
+    </div>
+  </nav>
+
+  <section class="hero">
+    <div class="hero-copy">
+      <span class="status-dot">自托管 · Docker Ready</span>
+      <h1>专为支付联调<br><em>Epay 网关</em></h1>
+      <p>兼容常见 Epay MD5 签名流程，内置虚拟卡、卡 BIN、3DS 密码、余额、订单超时、模拟拒付和异步回调。不会连接真实银行。</p>
+      <div class="hero-actions">
+        <a class="button button-primary button-large" href="<%= hasAdminSession ? '/admin' : '/admin/login' %>">打开管理面板</a>
+        <a class="button button-ghost button-large" href="/healthz">健康检查</a>
+      </div>
+      <div class="hero-points">
+        <span>✓ Docker Compose 一键部署</span>
+        <span>✓ SQLite 持久化</span>
+        <span>✓ Epay 标准签名</span>
+      </div>
+    </div>
+    <div class="terminal-card" aria-label="Epay API 示例">
+      <div class="terminal-bar"><i></i><i></i><i></i><span>merchant integration</span></div>
+      <pre><code>POST /api.php?act=order
+  pid         = 1001
+  out_trade_no= ORDER-001
+  money       = 10.00
+  type        = alipay
+  bind_card   = CARD-XXXXXXXX
+
+<span class="terminal-good">→ 302 /pay/T2026...</span>
+<span class="terminal-good">← trade_status = TRADE_SUCCESS</span></code></pre>
+    </div>
+  </section>
+
+  <section class="feature-grid">
+    <article class="feature-card">
+      <span class="feature-number">01</span>
+      <h2>虚拟卡实验台</h2>
+      <p>创建 BIN、生成符合 Luhn 校验的虚拟卡，随时调整余额、3DS 密码与卡片状态。</p>
+    </article>
+    <article class="feature-card">
+      <span class="feature-number">02</span>
+      <h2>可控支付结果</h2>
+      <p>支付页只展示订单绑定的卡片。支持拒付、余额不足、卡过期和 3DS 密码错误。</p>
+    </article>
+    <article class="feature-card">
+      <span class="feature-number">03</span>
+      <h2>标准回调</h2>
+      <p>成功、失败和超时均可生成带签名的异步通知，并按原网站地址返回商户。</p>
+    </article>
+  </section>
+
+  <section class="endpoint-panel">
+    <div>
+      <p class="eyebrow">ENDPOINTS</p>
+      <h2>商户接入入口</h2>
+    </div>
+    <div class="endpoint-list">
+      <div><code>/submit.php</code><span>浏览器跳转支付</span></div>
+      <div><code>/api.php</code><span>JSON 创建订单</span></div>
+      <div><code>/mapi.php</code><span>JSON API 别名</span></div>
+      <div><code>/healthz</code><span>容器健康检查</span></div>
+    </div>
+  </section>
+</main>
+<footer class="public-footer">
+  <span>Epay Test Gateway · 仅用于测试环境</span>
+  <span><%= merchantCount %> 个可用商户</span>
+</footer>
+</body>
+</html>

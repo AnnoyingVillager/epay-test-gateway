@@ -1,0 +1,6 @@
+<% if (query.ok) { %>
+  <div class="flash flash-success" role="status"><%= query.ok %></div>
+<% } %>
+<% if (query.error) { %>
+  <div class="flash flash-error" role="alert"><%= query.error %></div>
+<% } %>
