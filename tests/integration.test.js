@@ -5,6 +5,7 @@ const request = require('supertest');
 const { loadConfig } = require('../src/config');
 const { createApp } = require('../src/app');
 const { makeSign } = require('../src/epay');
+const { cardById } = require('../src/db');
 
 function csrfFrom(html) {
   const match = html.match(/name="_csrf" value="([^"]+)"/);
@@ -364,6 +365,8 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   });
   assert.equal(response.status, 302);
   assert.equal(appBundle.db.prepare('SELECT balance_minor FROM cards WHERE id = ?').get(cardId).balance_minor, 9000);
+  const cardSecrets = cardById(appBundle.db, config.appSecret, cardId, true);
+  const cardExpiry = `${String(cardSecrets.expiresMonth).padStart(2, '0')}/${String(cardSecrets.expiresYear).slice(-2)}`;
 
   const unboundSubmit = signedOrderParams('roles-merchant-key', {
     notify_url: `${callbackBase}/notify`,
@@ -378,8 +381,22 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   response = await request(appBundle.app).get(`/pay/${submitTradeNo}`);
   assert.equal(response.status, 200);
   assert.match(response.text, /绑定虚拟银行卡/);
-  assert.match(response.text, /直接绑定卡片支付/);
-  response = await request(appBundle.app).post(`/pay/${submitTradeNo}/bind`).type('form').send({ card_id: cardId });
+  assert.match(response.text, /使用银行卡信息绑卡/);
+  assert.match(response.text, /name="card_number"/);
+  assert.match(response.text, /name="expiry"/);
+  assert.match(response.text, /name="cvv"/);
+  response = await request(appBundle.app).post(`/pay/${submitTradeNo}/bind`).type('form').send({
+    card_number: cardSecrets.cardNumber,
+    expiry: cardExpiry,
+    cvv: '999'
+  });
+  assert.equal(response.status, 400);
+  assert.match(response.text, /卡号、有效期或 CVV 不匹配/);
+  response = await request(appBundle.app).post(`/pay/${submitTradeNo}/bind`).type('form').send({
+    card_number: cardSecrets.cardNumber,
+    expiry: cardExpiry,
+    cvv: cardSecrets.cvv
+  });
   assert.equal(response.status, 303);
   assert.equal(response.headers.location, `/pay/${submitTradeNo}`);
   response = await request(appBundle.app).get(`/pay/${submitTradeNo}`);
@@ -395,7 +412,9 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   const paidOrderForRefresh = appBundle.db.prepare('SELECT id FROM orders WHERE trade_no = ?').get(submitTradeNo);
   response = await admin.get(`/admin/orders/${paidOrderForRefresh.id}`);
   assert.equal(response.status, 200);
+  assert.equal(response.headers['cache-control'], 'no-store');
   assert.match(response.text, /data-orders-live-url="\/admin\/orders\/live"/);
+  assert.match(response.text, /\/js\/admin\.js\?v=1\./);
 
   const unboundApi = signedOrderParams('roles-merchant-key', {
     notify_url: `${callbackBase}/notify`,
@@ -424,4 +443,32 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   response = await payingUser.post(`/pay/${loginBindingTradeNo}/bind`).type('form').send({ card_id: userCreatedCardId });
   assert.equal(response.status, 303);
   assert.equal(appBundle.db.prepare('SELECT card_id FROM orders WHERE trade_no = ?').get(loginBindingTradeNo).card_id, userCreatedCardId);
+
+  const no3dsParams = signedOrderParams('roles-merchant-key', {
+    notify_url: `${callbackBase}/notify`,
+    return_url: `${callbackBase}/return`,
+    out_trade_no: `NO-3DS-${Date.now()}`,
+    money: '1.00'
+  });
+  response = await request(appBundle.app).get('/api.php').query(no3dsParams);
+  assert.equal(response.body.code, 1);
+  const no3dsTradeNo = response.body.trade_no;
+  response = await request(appBundle.app).post(`/pay/${no3dsTradeNo}/bind`).type('form').send({
+    card_number: cardSecrets.cardNumber,
+    expiry: cardExpiry,
+    cvv: cardSecrets.cvv
+  });
+  assert.equal(response.status, 303);
+  appBundle.db.prepare("UPDATE settings SET value = '0' WHERE key = 'require_3ds'").run();
+  response = await request(appBundle.app).get(`/pay/${no3dsTradeNo}`);
+  assert.equal(response.status, 200);
+  assert.match(response.text, /3DS 验证已关闭/);
+  assert.doesNotMatch(response.text, /name="pin"/);
+  response = await request(appBundle.app).post(`/pay/${no3dsTradeNo}/confirm`).type('form').send({});
+  assert.equal(response.status, 303);
+  assert.match(response.headers.location, /trade_status=TRADE_SUCCESS/);
+  const no3dsOrder = appBundle.db.prepare('SELECT id, status FROM orders WHERE trade_no = ?').get(no3dsTradeNo);
+  assert.equal(no3dsOrder.status, 'PAID');
+  assert.equal(appBundle.db.prepare('SELECT balance_minor FROM cards WHERE id = ?').get(cardId).balance_minor, 7666);
+  await waitFor(() => appBundle.db.prepare('SELECT * FROM callback_logs WHERE order_id = ? AND success = 1').get(no3dsOrder.id));
 });

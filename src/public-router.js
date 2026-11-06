@@ -4,6 +4,7 @@ const {
   getSetting,
   merchantByPid,
   cardById,
+  cardByNumberHash,
   orderByTradeNo,
   mapCard
 } = require('./db');
@@ -21,6 +22,18 @@ const {
   createSession,
   setSessionCookie
 } = require('./admin-auth');
+const { timingSafeEqualText } = require('./crypto');
+
+function normalizeCardNumber(value) {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function parseCardExpiry(value) {
+  const match = String(value || '').trim().match(/^(0[1-9]|1[0-2])\s*\/\s*(\d{2}|\d{4})$/);
+  if (!match) return null;
+  const year = match[2].length === 2 ? 2000 + Number(match[2]) : Number(match[2]);
+  return { month: Number(match[1]), year };
+}
 
 function router({ db, config, notification }) {
   const route = express.Router();
@@ -133,6 +146,7 @@ function router({ db, config, notification }) {
       order: renderOrderContext(order, merchant),
       currentUser: req.currentUser,
       userCards: userSelectableCards(req.currentUser),
+      require3ds: getSetting(db, 'require_3ds', '1') === '1',
       error,
       remainingSeconds: remainingSeconds(order)
     });
@@ -149,6 +163,7 @@ function router({ db, config, notification }) {
       title: '安全支付',
       order: renderOrderContext(order, merchant),
       card,
+      require3ds: getSetting(db, 'require_3ds', '1') === '1',
       error,
       remainingSeconds: remainingSeconds(order)
     });
@@ -204,12 +219,27 @@ function router({ db, config, notification }) {
       if (order.status !== 'PENDING') return renderPayment(req, res, order);
       if (order.cardId) return res.redirect(303, `/pay/${encodeURIComponent(order.tradeNo)}`);
 
-      const cardId = String(req.body.card_id || '').trim();
-      const card = cardId ? cardById(db, config.appSecret, cardId, false) : null;
-      if (!card) return renderBinding(req, res, order, { error: '未找到该虚拟卡，请检查卡片 ID。', statusCode: 400 });
-      if (req.currentUser?.role === 'user' && card.ownerUserId !== req.currentUser.id) {
-        return renderBinding(req, res, order, { error: '该虚拟卡不属于当前登录用户。', statusCode: 403 });
+      const selectedCardId = String(req.body.card_id || '').trim();
+      let card = null;
+
+      if (selectedCardId && req.currentUser) {
+        card = cardById(db, config.appSecret, selectedCardId, true);
+        if (card && req.currentUser.role === 'user' && card.ownerUserId !== req.currentUser.id) {
+          return renderBinding(req, res, order, { error: '该虚拟卡不属于当前登录用户。', statusCode: 403 });
+        }
+      } else {
+        const cardNumber = normalizeCardNumber(req.body.card_number);
+        const expiry = parseCardExpiry(req.body.expiry);
+        const cvv = String(req.body.cvv || '').trim();
+        if (cardNumber.length >= 12 && expiry && /^\d{3,4}$/.test(cvv)) {
+          const candidate = cardByNumberHash(db, config.appSecret, cardNumber);
+          if (candidate && candidate.expiresMonth === expiry.month && candidate.expiresYear === expiry.year && timingSafeEqualText(candidate.cvv, cvv)) {
+            card = candidate;
+          }
+        }
       }
+
+      if (!card) return renderBinding(req, res, order, { error: '卡号、有效期或 CVV 不匹配，请检查后重试。', statusCode: 400 });
 
       const updated = db.prepare("UPDATE orders SET card_id = ? WHERE id = ? AND status = 'PENDING' AND card_id IS NULL")
         .run(card.id, order.id).changes;
@@ -236,6 +266,7 @@ function router({ db, config, notification }) {
           title: '安全支付',
           order: renderOrderContext(order, merchant),
           card,
+          require3ds: getSetting(db, 'require_3ds', '1') === '1',
           error: result.message,
           remainingSeconds: remainingSeconds(order)
         });

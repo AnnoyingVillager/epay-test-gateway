@@ -53,11 +53,16 @@
 
       <% if (order.status === 'PENDING') { %>
         <form method="post" action="/pay/<%= encodeURIComponent(order.tradeNo) %>/confirm" class="pay-form">
-          <div class="step-label"><span>2</span> 3DS 安全验证</div>
-          <label class="field">
-            <span>3DS 密码</span>
-            <input type="password" name="pin" inputmode="numeric" autocomplete="one-time-code" required placeholder="输入卡片设置的 3DS 密码" <%= order.canPay ? '' : 'disabled' %>>
-          </label>
+          <% if (require3ds) { %>
+            <div class="step-label"><span>2</span> 3DS 安全验证</div>
+            <label class="field">
+              <span>3DS 密码</span>
+              <input type="password" name="pin" inputmode="numeric" autocomplete="one-time-code" required placeholder="输入卡片设置的 3DS 密码" <%= order.canPay ? '' : 'disabled' %>>
+            </label>
+          <% } else { %>
+            <div class="step-label"><span>2</span> 确认支付</div>
+            <div class="alert alert-info">3DS 验证已关闭，无需输入 3DS 密码。</div>
+          <% } %>
           <button class="button button-primary button-pay" type="submit" <%= order.canPay && card ? '' : 'disabled' %> data-pay-button>
             确认支付 <%= order.currency %> <%= order.money %>
           </button>
@@ -75,6 +80,6 @@
 
   <p class="checkout-footer">Epay Test Gateway · 仅用于测试，不处理真实银行卡信息</p>
 </main>
-<script src="/js/payment.js" defer></script>
+<script src="/js/payment.js?v=<%= assetVersion %>" defer></script>
 </body>
 </html>

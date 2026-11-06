@@ -9,6 +9,7 @@ const { userSessionFromRequest } = require('./admin-auth');
 const publicRouter = require('./public-router');
 const adminRouter = require('./admin-router');
 const { formatMinor } = require('./epay');
+const { version: appVersion } = require('../package.json');
 
 function createApp(options) {
   const config = options.config;
@@ -22,6 +23,7 @@ function createApp(options) {
   app.set('view engine', 'ejs');
   app.set('views', path.join(config.rootDir, 'views'));
   app.locals.config = config;
+  app.locals.assetVersion = appVersion;
   app.locals.db = db;
   app.locals.notification = notification;
   app.locals.formatMinor = formatMinor;
@@ -92,6 +94,10 @@ function createApp(options) {
   app.use('/pay/:tradeNo/bind', payLimiter);
   app.use('/pay/:tradeNo/login', loginLimiter);
   app.use('/admin/login', loginLimiter);
+  app.use('/admin', (req, res, next) => {
+    if (req.method === 'GET') res.set('Cache-Control', 'no-store');
+    next();
+  });
   app.use('/admin', adminRouter({ db, config, notification, logger }));
   app.use('/', publicRouter.router({ db, config, notification }));
 

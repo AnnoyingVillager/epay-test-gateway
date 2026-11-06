@@ -3,6 +3,7 @@ const crypto = require('node:crypto');
 const { formatMinor } = require('./epay');
 const {
   encrypt,
+  cardNumberHash,
   generateCardNumber,
   luhnValid,
   randomToken,
@@ -319,12 +320,12 @@ function router({ db, config, notification, logger }) {
     db.transaction(() => {
       db.prepare(`
         INSERT INTO cards (
-          id, owner_user_id, bin_id, card_number_enc, last4, expires_month, expires_year, cvv_enc, pin_enc,
+          id, owner_user_id, bin_id, card_number_enc, card_number_hash, last4, expires_month, expires_year, cvv_enc, pin_enc,
           balance_minor, currency, status, decline_reason, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
-        cardId, ownerId, bin.id, encrypt(cardNumber, config.appSecret), cardNumber.slice(-4), expiresMonth, expiresYear,
-        encrypt(cvv, config.appSecret), encrypt(pin, config.appSecret), balanceMinor,
+        cardId, ownerId, bin.id, encrypt(cardNumber, config.appSecret), cardNumberHash(cardNumber, config.appSecret),
+        cardNumber.slice(-4), expiresMonth, expiresYear, encrypt(cvv, config.appSecret), encrypt(pin, config.appSecret), balanceMinor,
         getSetting(db, 'default_currency', 'CNY'), status, status === 'declined' ? declineReason || '测试拒付' : null, now, now
       );
       db.prepare(`
@@ -642,6 +643,7 @@ function router({ db, config, notification, logger }) {
     const timeout = integer(req.body.order_timeout_seconds, 60, 86400);
     const currency = String(req.body.default_currency || 'CNY').trim().toUpperCase();
     const requireBinding = req.body.require_card_binding === '1' ? '1' : '0';
+    const require3ds = req.body.require_3ds === '1' ? '1' : '0';
     const supportedTypes = String(req.body.supported_types || '').split(',').map((item) => item.trim()).filter(Boolean).join(',');
     if (timeout === null || !/^[A-Z]{3}$/.test(currency) || !supportedTypes) {
       return redirectMessage(res, '/admin/settings', 'error', '设置参数无效。订单超时需为 60-86400 秒。');
@@ -650,6 +652,7 @@ function router({ db, config, notification, logger }) {
     setSetting(db, 'order_timeout_seconds', timeout);
     setSetting(db, 'default_currency', currency);
     setSetting(db, 'require_card_binding', requireBinding);
+    setSetting(db, 'require_3ds', require3ds);
     setSetting(db, 'supported_types', supportedTypes);
     res.app.locals.siteName = siteName;
     redirectMessage(res, '/admin/settings', 'ok', '系统设置已保存。');

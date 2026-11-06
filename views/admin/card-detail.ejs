@@ -16,7 +16,7 @@
       <div><span>3DS 密码</span><code><%= card.pin %></code><button type="button" class="copy-button" data-copy="<%= card.pin %>">复制</button></div>
       <div><span>CVV</span><code><%= card.cvv %></code><button type="button" class="copy-button" data-copy="<%= card.cvv %>">复制</button></div>
     </div>
-    <div class="alert alert-info"><strong>支付绑定：</strong>商户可传入 <code>bind_card=<%= card.id %></code> 指定此卡；未指定时可在支付页登录选卡或直接填写卡片 ID。</div>
+    <div class="alert alert-info"><strong>支付绑定：</strong>商户可传入 <code>bind_card=<%= card.id %></code> 指定此卡；未指定时可在支付页登录选卡，或输入卡号、有效期和 CVV。</div>
     <div class="button-row">
       <% if (isAdmin) { %>
         <form method="post" action="/admin/cards/<%= card.id %>/decline">

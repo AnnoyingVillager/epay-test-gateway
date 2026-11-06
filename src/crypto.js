@@ -35,6 +35,11 @@ function decrypt(payload, secret) {
   return Buffer.concat([decipher.update(Buffer.from(bodyPart, 'base64url')), decipher.final()]).toString('utf8');
 }
 
+function cardNumberHash(cardNumber, secret) {
+  const normalized = String(cardNumber || '').replace(/\D/g, '');
+  return crypto.createHmac('sha256', encryptionKey(secret)).update(normalized).digest('hex');
+}
+
 function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('base64url');
   const derived = crypto.scryptSync(String(password), salt, 64).toString('base64url');
@@ -156,6 +161,7 @@ module.exports = {
   randomDigits,
   encrypt,
   decrypt,
+  cardNumberHash,
   hashPassword,
   verifyPassword,
   luhnCheckDigit,

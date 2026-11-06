@@ -30,7 +30,7 @@
       <% if (error) { %><div class="alert alert-danger" role="alert"><%= error %></div><% } %>
 
       <% if (!currentUser) { %>
-        <div class="alert alert-info">该订单尚未绑定虚拟卡。你可以登录后选择自己的卡片，也可以直接输入管理员提供的卡片 ID。</div>
+        <div class="alert alert-info">该订单尚未绑定虚拟卡。你可以登录后选择自己的卡片，也可以直接输入卡号、有效期和 CVV 完成绑卡。</div>
         <form method="post" action="/pay/<%= encodeURIComponent(order.tradeNo) %>/login" class="stack-form">
           <div class="step-label"><span>A</span> 登录后选卡</div>
           <label class="field"><span>用户名</span><input name="username" autocomplete="username" required></label>
@@ -59,19 +59,29 @@
 
       <hr class="divider">
       <form method="post" action="/pay/<%= encodeURIComponent(order.tradeNo) %>/bind" class="stack-form">
-        <div class="step-label"><span>B</span> 直接绑定卡片支付</div>
+        <div class="step-label"><span>B</span> 使用银行卡信息绑卡</div>
         <label class="field">
-          <span>虚拟卡 ID</span>
-          <input name="card_id" placeholder="例如 CARD-1234ABCD" required autocomplete="off">
+          <span>卡号</span>
+          <input name="card_number" inputmode="numeric" maxlength="23" placeholder="输入虚拟卡号，可包含空格" required autocomplete="cc-number">
         </label>
-        <button class="button <%= currentUser ? 'button-ghost' : 'button-primary' %> button-block" type="submit" <%= order.canPay ? '' : 'disabled' %>>绑定此卡并继续</button>
-        <p class="secure-note">绑定后订单将只允许使用该虚拟卡，不能切换到其他卡片。不会产生真实资金交易。</p>
+        <div class="form-row">
+          <label class="field">
+            <span>有效期</span>
+            <input name="expiry" inputmode="numeric" pattern="(0[1-9]|1[0-2])/[0-9]{2,4}" maxlength="7" placeholder="MM/YY" required autocomplete="cc-exp">
+          </label>
+          <label class="field">
+            <span>CVV</span>
+            <input type="password" name="cvv" inputmode="numeric" pattern="[0-9]{3,4}" maxlength="4" placeholder="3-4 位 CVV" required autocomplete="cc-csc">
+          </label>
+        </div>
+        <button class="button <%= currentUser ? 'button-ghost' : 'button-primary' %> button-block" type="submit" <%= order.canPay ? '' : 'disabled' %>>验证卡片并继续</button>
+        <p class="secure-note"><% if (require3ds) { %>下一步需要输入卡片设置的 3DS 密码。<% } else { %>3DS 验证已关闭，绑定后会直接进入确认支付步骤。<% } %>绑定后订单只允许使用该虚拟卡，不会产生真实资金交易。</p>
       </form>
     </div>
   </section>
 
   <p class="checkout-footer">Epay Test Gateway · 仅用于测试，不处理真实银行卡信息</p>
 </main>
-<script src="/js/payment.js" defer></script>
+<script src="/js/payment.js?v=<%= assetVersion %>" defer></script>
 </body>
 </html>

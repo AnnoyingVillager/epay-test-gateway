@@ -167,7 +167,8 @@ function markOrderPaid({ db, config, tradeNo, pin }) {
       return { terminal: true, code: 'CARD_EXPIRED', message: 'Card has expired', order: orderByTradeNo(db, tradeNo) };
     }
 
-    if (!pin || pin !== card.pin) {
+    const require3ds = getSetting(db, 'require_3ds', '1') === '1';
+    if (require3ds && (!pin || pin !== card.pin)) {
       return { wrongPin: true, message: '3DS 密码错误', order: orderByTradeNo(db, tradeNo) };
     }
 

@@ -12,7 +12,8 @@
 - 创建符合 Luhn 校验的虚拟卡号，支持自定义 BIN 前缀、品牌、卡号长度
 - 管理员可修改虚拟卡余额、有效期、CVV、3DS 密码、状态，并记录手工消费
 - 一键“模拟拒付”，并可模拟已支付订单的拒付/退单
-- 订单绑卡：已绑定订单只接受指定虚拟卡；未绑定订单可登录选卡或直接输入卡片 ID
+- 订单绑卡：已绑定订单只接受指定虚拟卡；未绑定订单可登录选卡，或通过卡号、有效期和 CVV 绑卡
+- 3DS 验证可在后台开关；关闭后支付确认无需输入 3DS 密码
 - 未携带 `bind_card` 的 `/submit.php` 请求不再报错，会跳转到绑卡支付页
 - 订单超时倒计时、自动过期和服务端二次校验
 - 后台订单页轮询状态变化，支付成功、失败、超时或回调更新后自动刷新
@@ -23,7 +24,7 @@
 ## 已发布镜像
 
 - `ghcr.io/annoyingvillager/epay-test-gateway:latest`
-- `ghcr.io/annoyingvillager/epay-test-gateway:1.1.2` 和 `:1.1`（对应 Git 标签 `v1.1.2`）
+- `ghcr.io/annoyingvillager/epay-test-gateway:1.2.0` 和 `:1.2`（对应 Git 标签 `v1.2.0`）
 - 同时提供 `linux/amd64` 与 `linux/arm64` 多架构镜像
 
 ## 无需克隆源码部署
@@ -127,8 +128,9 @@ docker run -d \
 4. 普通用户登录后打开 **虚拟卡 → 创建虚拟卡**，设置初始余额和 3DS 密码。
 5. 用 `/api.php` 或 `/submit.php` 发起订单。
 6. 如果传入 `bind_card=CARD-...`，支付页直接显示指定卡片。
-7. 如果未传 `bind_card`，支付页会提示登录后选卡，或直接输入卡片 ID 绑卡。
-8. 输入卡片详情中的 3DS 密码完成支付；管理员可在后台调额、手工消费或切换“模拟拒付”。
+7. 如果未传 `bind_card`，支付页会提示登录后选卡，或输入卡号、有效期和 CVV 绑卡。
+8. 3DS 开启时输入卡片详情中的 3DS 密码完成支付；关闭后可直接确认支付。
+9. 管理员可在后台调额、手工消费或切换“模拟拒付”。
 
 ## 用户与权限
 
@@ -150,7 +152,7 @@ docker run -d \
 `bind_card` 现在是可选参数。未携带卡片的订单仍会正常创建，`/submit.php` 返回 `302` 到支付页，而不是返回 `CARD_BINDING_REQUIRED`。支付页提供两种方式：
 
 1. 使用管理员或普通用户账号登录，然后从自己的卡片中选择一张支付。
-2. 不登录，直接输入管理员提供的 `CARD-...` 卡片 ID 绑卡后支付。
+2. 不登录，直接输入有效的卡号、`MM/YY` 有效期和 CVV 绑卡后支付。
 
 一旦订单绑定卡片，页面只接受该卡片，不能切换到其他卡。
 
@@ -319,7 +321,7 @@ errcode=CHARGEBACK
 - **订单**：管理员查看全部订单，普通用户仅查看自己卡片关联的订单
 - **用户**：创建管理员/普通用户、启停、重置密码、调整角色
 - **商户**：PID、MD5 密钥、启停、密钥轮换
-- **设置**：站点名称、默认超时、结算货币、支付类型、支付页绑卡
+- **设置**：站点名称、默认超时、结算货币、支付类型、支付页绑卡、3DS 验证开关
 
 ## 环境变量
 
@@ -372,7 +374,7 @@ npm test
 
 ## 发布到 GitHub 与 Docker 镜像
 
-仓库已包含 `.github/workflows/docker.yml`。推送 `main` 分支会构建并推送 `ghcr.io/<owner>/<repo>:latest`；推送 `v1.1.2` 这类标签会额外生成版本标签。
+仓库已包含 `.github/workflows/docker.yml`。推送 `main` 分支会构建并推送 `ghcr.io/<owner>/<repo>:latest`；推送 `v1.2.0` 这类标签会额外生成版本标签。
 
 ```bash
 git init -b main
@@ -380,8 +382,8 @@ git add .
 git commit -m "feat: add Epay test gateway"
 gh auth login
 gh repo create epay-test-gateway --public --source=. --remote=origin --push
-git tag v1.1.2
-git push origin v1.1.2
+git tag v1.2.0
+git push origin v1.2.0
 ```
 
 首次使用 GHCR 时，Actions 使用仓库的 `GITHUB_TOKEN` 推送。部署机器拉取公开镜像：
@@ -398,7 +400,7 @@ docker pull ghcr.io/<owner>/epay-test-gateway:latest
 - 修改默认管理员密码、`APP_SECRET` 和商户密钥。
 - 对外暴露时使用 HTTPS 反向代理，并设置 `COOKIE_SECURE=true`、`TRUST_PROXY=true`。
 - 为管理面板增加网络访问限制或 VPN。
-- 卡片号、CVV 和 3DS 密码使用 AES-256-GCM 加密后存储；加密密钥从 `APP_SECRET` 派生。
+- 卡片号、CVV 和 3DS 密码使用 AES-256-GCM 加密后存储；卡号另以密钥化哈希建立查询索引，加密密钥从 `APP_SECRET` 派生。
 - 用户密码使用 scrypt 加盐哈希存储，不保存明文。
 - 管理表单具有 CSRF 防护、登录限流和单次支付限流。
 - 普通用户的卡片、订单和绑卡选择均按账号隔离。

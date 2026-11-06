@@ -29,18 +29,19 @@ class Database {
     };
   }
 }
-const { encrypt, decrypt, hashPassword } = require('./crypto');
+const { encrypt, decrypt, hashPassword, cardNumberHash } = require('./crypto');
 
 const DEFAULT_SETTINGS = {
   site_name: 'Epay Test Gateway',
   order_timeout_seconds: '900',
   require_card_binding: '1',
+  require_3ds: '1',
   default_currency: 'CNY',
   notify_retry_count: '3',
   supported_types: 'alipay,wxpay,qqpay'
 };
 
-function migrate(db) {
+function migrate(db, config) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
@@ -75,6 +76,7 @@ function migrate(db) {
       owner_user_id INTEGER REFERENCES users(id),
       bin_id INTEGER NOT NULL REFERENCES bins(id),
       card_number_enc TEXT NOT NULL,
+      card_number_hash TEXT,
       last4 TEXT NOT NULL,
       expires_month INTEGER NOT NULL CHECK(expires_month BETWEEN 1 AND 12),
       expires_year INTEGER NOT NULL,
@@ -163,7 +165,19 @@ function migrate(db) {
   if (!cardColumns.some((column) => column.name === 'owner_user_id')) {
     db.exec('ALTER TABLE cards ADD COLUMN owner_user_id INTEGER REFERENCES users(id)');
   }
+  if (!cardColumns.some((column) => column.name === 'card_number_hash')) {
+    db.exec('ALTER TABLE cards ADD COLUMN card_number_hash TEXT');
+  }
   db.exec('CREATE INDEX IF NOT EXISTS idx_cards_owner ON cards(owner_user_id, created_at DESC)');
+
+  const missingHashes = db.prepare("SELECT id, card_number_enc FROM cards WHERE card_number_hash IS NULL OR card_number_hash = ''").all();
+  if (missingHashes.length) {
+    const update = db.prepare('UPDATE cards SET card_number_hash = ? WHERE id = ?');
+    db.transaction(() => {
+      for (const card of missingHashes) update.run(cardNumberHash(decrypt(card.card_number_enc, config.appSecret), config.appSecret), card.id);
+    })();
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_cards_number_hash ON cards(card_number_hash)');
 }
 
 function seed(db, config) {
@@ -210,7 +224,7 @@ function openDatabase(config) {
   const db = new Database(config.databasePath);
   if (config.databasePath !== ':memory:') db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
-  migrate(db);
+  migrate(db, config);
   seed(db, config);
   return db;
 }
@@ -345,6 +359,17 @@ function cardById(db, secret, id, includeSecrets = true) {
   return mapCard(row, secret, includeSecrets);
 }
 
+function cardByNumberHash(db, secret, cardNumber) {
+  const row = db.prepare(`
+    SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, u.username AS owner_username
+    FROM cards c
+    JOIN bins b ON b.id = c.bin_id
+    LEFT JOIN users u ON u.id = c.owner_user_id
+    WHERE c.card_number_hash = ?
+  `).get(cardNumberHash(cardNumber, secret));
+  return mapCard(row, secret, true);
+}
+
 function orderByTradeNo(db, tradeNo) {
   const row = db.prepare(`
     SELECT o.*, m.pid AS merchant_pid, m.name AS merchant_name, c.last4 AS card_last4
@@ -370,5 +395,6 @@ module.exports = {
   merchantByPid,
   merchantById,
   cardById,
+  cardByNumberHash,
   orderByTradeNo
 };
