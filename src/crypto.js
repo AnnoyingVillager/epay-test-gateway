@@ -35,6 +35,24 @@ function decrypt(payload, secret) {
   return Buffer.concat([decipher.update(Buffer.from(bodyPart, 'base64url')), decipher.final()]).toString('utf8');
 }
 
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('base64url');
+  const derived = crypto.scryptSync(String(password), salt, 64).toString('base64url');
+  return `scrypt$${salt}$${derived}`;
+}
+
+function verifyPassword(password, encoded) {
+  try {
+    const [scheme, salt, expectedPart] = String(encoded || '').split('$');
+    if (scheme !== 'scrypt' || !salt || !expectedPart) return false;
+    const expected = Buffer.from(expectedPart, 'base64url');
+    const actual = crypto.scryptSync(String(password), salt, expected.length);
+    return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+  } catch {
+    return false;
+  }
+}
+
 function luhnCheckDigit(numberWithoutCheck) {
   let sum = 0;
   let doubleDigit = true;
@@ -89,9 +107,11 @@ function timingSafeEqualText(left, right) {
   return crypto.timingSafeEqual(a, b);
 }
 
-function createAdminSession(username, secret, ttlSeconds) {
+function createUserSession(user, secret, ttlSeconds) {
   const payload = {
-    u: username,
+    uid: Number(user.id),
+    u: user.username,
+    r: user.role,
     csrf: randomToken(24),
     exp: Math.floor(Date.now() / 1000) + ttlSeconds
   };
@@ -100,14 +120,14 @@ function createAdminSession(username, secret, ttlSeconds) {
   return { token: `${body}.${signature}`, payload };
 }
 
-function verifyAdminSession(token, secret, username) {
+function verifyUserSession(token, secret) {
   if (!token || !token.includes('.')) return null;
   const [body, signature] = token.split('.');
   const expected = crypto.createHmac('sha256', secret).update(body).digest('base64url');
   if (!timingSafeEqualText(signature, expected)) return null;
   try {
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
-    if (payload.u !== username || !payload.csrf || Number(payload.exp) <= Math.floor(Date.now() / 1000)) return null;
+    if (!Number.isSafeInteger(payload.uid) || payload.uid < 1 || !payload.u || !['admin', 'user'].includes(payload.r) || !payload.csrf || Number(payload.exp) <= Math.floor(Date.now() / 1000)) return null;
     return payload;
   } catch {
     return null;
@@ -136,12 +156,14 @@ module.exports = {
   randomDigits,
   encrypt,
   decrypt,
+  hashPassword,
+  verifyPassword,
   luhnCheckDigit,
   luhnValid,
   generateCardNumber,
   maskCardNumber,
   timingSafeEqualText,
-  createAdminSession,
-  verifyAdminSession,
+  createUserSession,
+  verifyUserSession,
   parseCookies
 };

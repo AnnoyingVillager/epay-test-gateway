@@ -210,3 +210,207 @@ test('admin, Epay API, payment, callbacks, failures and chargeback work end to e
   assert.equal(response.status, 302);
   assert.match(response.headers.location, /\/pay\/T/);
 });
+
+test('admin and user roles, card ownership, manual consume and card binding flow work end to end', async (t) => {
+  const callbackServer = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('success');
+  });
+  await new Promise((resolve) => callbackServer.listen(0, '127.0.0.1', resolve));
+  const callbackBase = `http://127.0.0.1:${callbackServer.address().port}`;
+
+  const config = loadConfig({
+    databasePath: ':memory:',
+    appSecret: 'roles-binding-test-secret',
+    adminPassword: 'test-admin-password',
+    adminUsername: 'admin',
+    adminPasswordIsDefault: false,
+    defaultMerchantKey: 'roles-merchant-key',
+    sweepIntervalMs: 3600000,
+    notifyRetryCount: 1,
+    notifyTimeoutMs: 1000
+  });
+  const appBundle = createApp({ config, logger: { error: console.error } });
+  t.after(async () => {
+    appBundle.close();
+    await new Promise((resolve) => callbackServer.close(resolve));
+  });
+
+  const admin = request.agent(appBundle.app);
+  let response = await admin.post('/admin/login').type('form').send({ username: 'admin', password: 'test-admin-password' });
+  assert.equal(response.status, 302);
+
+  response = await admin.get('/admin/users');
+  assert.equal(response.status, 200);
+  let csrf = csrfFrom(response.text);
+  response = await admin.post('/admin/users').type('form').send({
+    _csrf: csrf,
+    username: 'normal-user',
+    password: 'normal-password',
+    role: 'user'
+  });
+  assert.equal(response.status, 302);
+  const normalUser = appBundle.db.prepare("SELECT * FROM users WHERE username = 'normal-user'").get();
+  assert.equal(normalUser.role, 'user');
+  response = await admin.get('/admin/users');
+  assert.equal(response.status, 200);
+  assert.match(response.text, /normal-user/);
+
+  response = await admin.get('/admin/bins');
+  csrf = csrfFrom(response.text);
+  response = await admin.post('/admin/bins').type('form').send({
+    _csrf: csrf,
+    name: 'Roles Test BIN',
+    prefix: '553311',
+    brand: 'Mastercard',
+    card_type: 'debit',
+    country: 'CN',
+    number_length: '16'
+  });
+  assert.equal(response.status, 302);
+  const bin = appBundle.db.prepare("SELECT * FROM bins WHERE prefix = '553311'").get();
+
+  response = await admin.get('/admin/cards/new');
+  csrf = csrfFrom(response.text);
+  response = await admin.post('/admin/cards').type('form').send({
+    _csrf: csrf,
+    owner_user_id: String(normalUser.id),
+    bin_id: String(bin.id),
+    balance: '50.00',
+    expires_month: '12',
+    expires_year: String(new Date().getFullYear() + 5),
+    cvv: '321',
+    pin: '135790',
+    status: 'active',
+    decline_reason: ''
+  });
+  assert.equal(response.status, 302);
+  const cardId = decodeURIComponent(response.headers.location.split('/admin/cards/')[1].split('?')[0]);
+  assert.equal(appBundle.db.prepare('SELECT owner_user_id FROM cards WHERE id = ?').get(cardId).owner_user_id, normalUser.id);
+
+  const user = request.agent(appBundle.app);
+  response = await user.post('/admin/login').type('form').send({ username: 'normal-user', password: 'normal-password' });
+  assert.equal(response.status, 302);
+  assert.equal(response.headers.location, '/admin');
+
+  response = await user.get('/admin');
+  assert.equal(response.status, 200);
+  assert.match(response.text, /我的仪表盘/);
+  response = await user.get('/admin/cards');
+  assert.equal(response.status, 200);
+  assert.match(response.text, new RegExp(cardId));
+  for (const path of ['/admin/bins', '/admin/users', '/admin/merchants', '/admin/settings']) {
+    response = await user.get(path);
+    assert.equal(response.status, 403, path);
+  }
+
+  response = await user.get(`/admin/cards/${cardId}`);
+  assert.equal(response.status, 200);
+  assert.match(response.text, /普通用户仅可创建自己的虚拟卡/);
+  assert.doesNotMatch(response.text, /手工消费/);
+  response = await user.get('/admin/cards/new');
+  const userCsrf = csrfFrom(response.text);
+  response = await user.post(`/admin/cards/${cardId}/update`).type('form').send({
+    _csrf: userCsrf,
+    status: 'active',
+    balance: '999999.00',
+    expires_month: '12',
+    expires_year: String(new Date().getFullYear() + 5),
+    pin: '135790',
+    cvv: '321'
+  });
+  assert.equal(response.status, 403);
+
+  response = await user.get('/admin/cards/new');
+  csrf = csrfFrom(response.text);
+  response = await user.post('/admin/cards').type('form').send({
+    _csrf: csrf,
+    bin_id: String(bin.id),
+    balance: '20.00',
+    expires_month: '11',
+    expires_year: String(new Date().getFullYear() + 4),
+    cvv: '777',
+    pin: '864200',
+    status: 'declined'
+  });
+  assert.equal(response.status, 302);
+  const userCreatedCardId = decodeURIComponent(response.headers.location.split('/admin/cards/')[1].split('?')[0]);
+  const userCreatedCard = appBundle.db.prepare('SELECT * FROM cards WHERE id = ?').get(userCreatedCardId);
+  assert.equal(userCreatedCard.owner_user_id, normalUser.id);
+  assert.equal(userCreatedCard.status, 'active');
+
+  response = await admin.get(`/admin/cards/${cardId}`);
+  csrf = csrfFrom(response.text);
+  response = await admin.post(`/admin/cards/${cardId}/update`).type('form').send({
+    _csrf: csrf,
+    owner_user_id: String(normalUser.id),
+    status: 'active',
+    decline_reason: '',
+    balance: '100.00',
+    expires_month: '12',
+    expires_year: String(new Date().getFullYear() + 5),
+    pin: '135790',
+    cvv: '321'
+  });
+  assert.equal(response.status, 302);
+  response = await admin.post(`/admin/cards/${cardId}/consume`).type('form').send({
+    _csrf: csrf,
+    amount: '10.00',
+    note: '管理员手工消费测试'
+  });
+  assert.equal(response.status, 302);
+  assert.equal(appBundle.db.prepare('SELECT balance_minor FROM cards WHERE id = ?').get(cardId).balance_minor, 9000);
+
+  const unboundSubmit = signedOrderParams('roles-merchant-key', {
+    notify_url: `${callbackBase}/notify`,
+    return_url: `${callbackBase}/return`,
+    out_trade_no: `UNBOUND-SUBMIT-${Date.now()}`
+  });
+  response = await request(appBundle.app).get('/submit.php').query(unboundSubmit);
+  assert.equal(response.status, 302);
+  assert.match(response.headers.location, /\/pay\/T/);
+  const submitTradeNo = response.headers.location.split('/pay/')[1];
+
+  response = await request(appBundle.app).get(`/pay/${submitTradeNo}`);
+  assert.equal(response.status, 200);
+  assert.match(response.text, /绑定虚拟银行卡/);
+  assert.match(response.text, /直接绑定卡片支付/);
+  response = await request(appBundle.app).post(`/pay/${submitTradeNo}/bind`).type('form').send({ card_id: cardId });
+  assert.equal(response.status, 303);
+  assert.equal(response.headers.location, `/pay/${submitTradeNo}`);
+  response = await request(appBundle.app).get(`/pay/${submitTradeNo}`);
+  assert.equal(response.status, 200);
+  assert.match(response.text, /绑定的虚拟银行卡/);
+  response = await request(appBundle.app).post(`/pay/${submitTradeNo}/confirm`).type('form').send({ pin: '135790' });
+  assert.equal(response.status, 303);
+  assert.match(response.headers.location, /trade_status=TRADE_SUCCESS/);
+  assert.equal(appBundle.db.prepare('SELECT balance_minor FROM cards WHERE id = ?').get(cardId).balance_minor, 7766);
+
+  const unboundApi = signedOrderParams('roles-merchant-key', {
+    notify_url: `${callbackBase}/notify`,
+    return_url: `${callbackBase}/return`,
+    out_trade_no: `UNBOUND-API-${Date.now()}`
+  });
+  response = await request(appBundle.app).get('/api.php').query(unboundApi);
+  assert.equal(response.status, 200);
+  assert.equal(response.body.code, 1);
+  assert.equal(response.body.bind_card, null);
+  const loginBindingTradeNo = response.body.trade_no;
+
+  const payingUser = request.agent(appBundle.app);
+  response = await payingUser.get(`/pay/${loginBindingTradeNo}`);
+  assert.equal(response.status, 200);
+  assert.match(response.text, /登录后选卡/);
+  response = await payingUser.post(`/pay/${loginBindingTradeNo}/login`).type('form').send({
+    username: 'normal-user',
+    password: 'normal-password'
+  });
+  assert.equal(response.status, 303);
+  response = await payingUser.get(`/pay/${loginBindingTradeNo}`);
+  assert.equal(response.status, 200);
+  assert.match(response.text, /选择我的虚拟卡/);
+  assert.match(response.text, new RegExp(userCreatedCardId));
+  response = await payingUser.post(`/pay/${loginBindingTradeNo}/bind`).type('form').send({ card_id: userCreatedCardId });
+  assert.equal(response.status, 303);
+  assert.equal(appBundle.db.prepare('SELECT card_id FROM orders WHERE trade_no = ?').get(loginBindingTradeNo).card_id, userCreatedCardId);
+});

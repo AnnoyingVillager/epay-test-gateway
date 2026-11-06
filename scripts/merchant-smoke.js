@@ -9,12 +9,6 @@ const money = process.env.MONEY || '10.00';
 const notifyUrl = process.env.NOTIFY_URL || `${baseUrl}/merchant-notify`;
 const returnUrl = process.env.RETURN_URL || `${baseUrl}/merchant-return`;
 
-if (!bindCard) {
-  console.error('BIND_CARD is required. Copy CARD-... from the admin card detail page.');
-  console.error('Example: BIND_CARD=CARD-1234567890 npm run test:merchant');
-  process.exit(1);
-}
-
 const params = {
   act: 'order',
   pid,
@@ -25,9 +19,9 @@ const params = {
   name: process.env.ORDER_NAME || 'Epay integration test order',
   money,
   sitename: process.env.SITE_NAME || 'Demo Shop',
-  bind_card: bindCard,
   timeout: process.env.TIMEOUT || '900'
 };
+if (bindCard) params.bind_card = bindCard;
 params.sign = makeSign(params, key);
 params.sign_type = 'MD5';
 

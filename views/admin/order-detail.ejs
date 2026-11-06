@@ -20,8 +20,10 @@
     <div class="url-block"><span>return_url</span><code><%= order.returnUrl %></code></div>
     <% if (order.param) { %><div class="url-block"><span>param</span><code><%= order.param %></code></div><% } %>
     <div class="button-row">
-      <form method="post" action="/admin/orders/<%= order.id %>/resend"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-ghost" type="submit">重新发送回调</button></form>
-      <% if (order.status === 'PAID') { %><form method="post" action="/admin/orders/<%= order.id %>/chargeback" data-confirm="确认模拟拒付/退单？金额将退回虚拟卡。"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-danger" type="submit">模拟拒付 / 退单</button></form><% } %>
+      <% if (isAdmin) { %>
+        <form method="post" action="/admin/orders/<%= order.id %>/resend"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-ghost" type="submit">重新发送回调</button></form>
+        <% if (order.status === 'PAID') { %><form method="post" action="/admin/orders/<%= order.id %>/chargeback" data-confirm="确认模拟拒付/退单？金额将退回虚拟卡。"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-danger" type="submit">模拟拒付 / 退单</button></form><% } %>
+      <% } %>
       <a class="button button-ghost" href="/pay/<%= encodeURIComponent(order.tradeNo) %>" target="_blank" rel="noopener">查看支付页</a>
     </div>
   </section>
@@ -38,7 +40,7 @@
       <div><dt>回调事件</dt><dd><code><%= order.callbackEvent || '-' %></code></dd></div>
       <div><dt>商户 PID</dt><dd><code><%= merchant.pid %></code></dd></div>
       <div><dt>签名方式</dt><dd>MD5</dd></div>
-      <div><dt>商户密钥</dt><dd><code class="break-all"><%= merchant.key %></code><button type="button" class="copy-button" data-copy="<%= merchant.key %>">复制</button></dd></div>
+      <% if (isAdmin) { %><div><dt>商户密钥</dt><dd><code class="break-all"><%= merchant.key %></code><button type="button" class="copy-button" data-copy="<%= merchant.key %>">复制</button></dd></div><% } %>
     </dl>
     <div class="alert alert-info">商户的 notify 接口返回纯文本 <code>success</code> 时，回调才会被标记为已送达。</div>
   </aside>

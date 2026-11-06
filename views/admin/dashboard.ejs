@@ -19,7 +19,7 @@
   </article>
 </section>
 
-<% if (config.adminPasswordIsDefault) { %>
+<% if (isAdmin && config.adminPasswordIsDefault) { %>
 <div class="alert alert-warning"><strong>安全提醒：</strong>当前仍在使用默认管理员密码。部署到可访问网络前，请修改 <code>ADMIN_PASSWORD</code> 与 <code>APP_SECRET</code>。</div>
 <% } %>
 
@@ -53,7 +53,13 @@
 
 <section class="quick-grid">
   <a class="quick-card" href="/admin/cards/new"><span>+</span><div><strong>创建虚拟卡</strong><small>生成卡号、余额和 3DS 密码</small></div></a>
-  <a class="quick-card" href="/admin/bins"><span>#</span><div><strong>管理卡 BIN</strong><small>配置品牌、前缀和卡号长度</small></div></a>
-  <a class="quick-card" href="/admin/merchants"><span>↗</span><div><strong>商户密钥</strong><small>查看商户 PID 与 MD5 密钥</small></div></a>
+  <% if (isAdmin) { %>
+    <a class="quick-card" href="/admin/bins"><span>#</span><div><strong>管理卡 BIN</strong><small>配置品牌、前缀和卡号长度</small></div></a>
+    <a class="quick-card" href="/admin/users"><span>@</span><div><strong>用户管理</strong><small>创建管理员或普通用户账号</small></div></a>
+    <a class="quick-card" href="/admin/merchants"><span>↗</span><div><strong>商户密钥</strong><small>查看商户 PID 与 MD5 密钥</small></div></a>
+  <% } else { %>
+    <a class="quick-card" href="/admin/orders"><span>↗</span><div><strong>我的订单</strong><small>查看已绑定卡片的支付记录</small></div></a>
+    <a class="quick-card" href="/"><span>?</span><div><strong>支付说明</strong><small>查看 API 与支付流程文档</small></div></a>
+  <% } %>
 </section>
 <%- include('../partials/admin-end') %>

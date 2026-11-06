@@ -7,7 +7,9 @@
 | GET/POST | `/api.php` | JSON 创建订单 |
 | GET/POST | `/mapi.php` | `/api.php` 的别名 |
 | GET/POST | `/submit.php` | 直接跳转支付页 |
-| GET | `/pay/:tradeNo` | 测试支付页 |
+| GET | `/pay/:tradeNo` | 支付页；未绑卡时显示绑卡页面 |
+| POST | `/pay/:tradeNo/login` | 绑卡前登录账号 |
+| POST | `/pay/:tradeNo/bind` | 绑定卡片到订单 |
 | GET | `/healthz` | 健康检查 |
 
 ## 订单字段
@@ -24,7 +26,7 @@
 | `money` | 是 | decimal | 正金额，最多 2 位小数 |
 | `sitename` | 否 | string | 商户站点名称 |
 | `param` | 否 | string | 原样透传字段 |
-| `bind_card` | 默认必填 | string | 虚拟卡 ID |
+| `bind_card` | 否 | string | 预绑定虚拟卡 ID；不传时在支付页登录选卡或直接绑卡 |
 | `timeout` | 否 | integer | 订单超时秒数，60-86400 |
 | `sign` | 是 | string | 小写 MD5 |
 | `sign_type` | 否 | string | 固定 `MD5` |
@@ -36,6 +38,10 @@
 参与签名的字段是除 `sign`、`sign_type` 外的全部非空请求字段。字段按名称 ASCII 升序排列。
 
 ```text
+message = "money=10.00&name=Test&notify_url=https%3A%2F%2F..."
+sign = md5(message + merchant_key)
+
+# 如果传入 bind_card，它同样需要参与签名：
 message = "bind_card=CARD-123&money=10.00&name=Test&notify_url=https%3A%2F%2F..."
 sign = md5(message + merchant_key)
 ```
@@ -59,9 +65,12 @@ sign = md5(message + merchant_key)
   "urlscheme": "http://localhost:3001/pay/T20261106120000A1B2C3D4E5",
   "qrcode": "http://localhost:3001/pay/T20261106120000A1B2C3D4E5",
   "money": "10.00",
-  "status": "pending"
+  "status": "pending",
+  "bind_card": null
 }
 ```
+
+传入 `bind_card` 时，该字段返回实际卡 ID；未传入时为 `null`，`payurl` 指向绑卡页面。
 
 ## API 错误响应
 
@@ -84,14 +93,13 @@ HTTP 状态通常保持 `200`，便于兼容只解析 JSON 的 Epay 客户端。
 - `INVALID_NOTIFY_URL`
 - `INVALID_RETURN_URL`
 - `UNSUPPORTED_PAY_TYPE`
-- `CARD_BINDING_REQUIRED`
 - `CARD_NOT_FOUND`
 - `DUPLICATE_OUT_TRADE_NO`
 - `SYSTEM_ERROR`
 
 ## 支付校验
 
-支付页只展示订单绑定的卡片，不接受用户自由输入卡号。确认支付时按顺序校验：
+支付页不会接受完整卡号。订单已预绑定卡片时只展示该卡；未绑定时，用户可以登录并选择自己名下的卡，也可以直接输入管理员提供的卡片 ID。普通用户不能把不属于自己的卡绑定到订单。绑定完成后，页面只接受该卡。确认支付时按顺序校验：
 
 1. 订单仍为 `PENDING` 且未过期
 2. 虚拟卡存在

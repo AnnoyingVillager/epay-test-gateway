@@ -1,0 +1,48 @@
+<%- include('../partials/head', { bodyClass: 'admin-page' }) %>
+<%- include('../partials/admin-start') %>
+<div class="split-layout">
+  <section class="panel">
+    <div class="panel-head"><div><p class="eyebrow">ACCOUNTS</p><h2>用户列表</h2></div><span class="count-badge"><%= users.length %></span></div>
+    <% if (!users.length) { %>
+      <div class="empty-state compact">暂无用户。</div>
+    <% } else { %>
+      <div class="stack-list">
+        <% users.forEach((user) => { %>
+          <article class="list-card">
+            <details class="inline-details" open>
+              <summary>
+                <span class="list-card-main">
+                  <span class="mini-card"><%= user.username.slice(0, 1).toUpperCase() %></span>
+                  <span><strong><%= user.username %></strong><small><%= user.role === 'admin' ? '管理员' : '普通用户' %> · <%= user.card_count %> 张卡</small></span>
+                </span>
+                <span class="list-card-side">
+                  <span class="pill <%= user.is_active ? 'pill-success' : 'pill-muted' %>"><%= user.is_active ? '启用' : '停用' %></span>
+                  <% if (user.id === currentUserId) { %><span class="pill pill-muted">当前账号</span><% } %>
+                </span>
+              </summary>
+              <form method="post" action="/admin/users/<%= user.id %>/update" class="form-grid compact-grid">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <label class="field"><span>角色</span><select name="role"><option value="user" <%= user.role === 'user' ? 'selected' : '' %>>普通用户</option><option value="admin" <%= user.role === 'admin' ? 'selected' : '' %>>管理员</option></select></label>
+                <label class="field"><span>状态</span><select name="is_active"><option value="1" <%= user.is_active ? 'selected' : '' %>>启用</option><option value="0" <%= !user.is_active ? 'selected' : '' %>>停用</option></select></label>
+                <label class="field field-span-2"><span>重置密码（留空则不修改）</span><input type="password" name="password" minlength="8" maxlength="128" autocomplete="new-password" placeholder="至少 8 位"></label>
+                <div class="form-actions field-span-2"><button class="button button-primary button-small" type="submit">保存用户</button></div>
+              </form>
+            </details>
+          </article>
+        <% }) %>
+      </div>
+    <% } %>
+  </section>
+  <aside class="panel sticky-panel">
+    <div class="panel-head"><div><p class="eyebrow">NEW USER</p><h2>创建用户</h2></div></div>
+    <form method="post" action="/admin/users" class="stack-form">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label class="field"><span>用户名</span><input name="username" pattern="[A-Za-z0-9_.-]{3,32}" minlength="3" maxlength="32" required autocomplete="off"></label>
+      <label class="field"><span>初始密码</span><input type="password" name="password" minlength="8" maxlength="128" required autocomplete="new-password"></label>
+      <label class="field"><span>角色</span><select name="role"><option value="user">普通用户</option><option value="admin">管理员</option></select></label>
+      <button class="button button-primary button-block" type="submit">创建用户</button>
+      <p class="form-hint">普通用户只能创建、查看自己的虚拟卡，并通过绑卡页面消费。管理员拥有 BIN、余额、用户和系统管理权限。</p>
+    </form>
+  </aside>
+</div>
+<%- include('../partials/admin-end') %>

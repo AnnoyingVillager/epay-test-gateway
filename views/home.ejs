@@ -7,7 +7,7 @@
     </a>
     <div class="public-nav-actions">
       <a class="button button-ghost" href="/api.php?act=order">API</a>
-      <a class="button button-dark" href="<%= hasAdminSession ? '/admin' : '/admin/login' %>"><%= hasAdminSession ? '进入后台' : '管理登录' %></a>
+      <a class="button button-dark" href="<%= hasUserSession ? '/admin' : '/admin/login' %>"><%= hasUserSession ? '进入用户中心' : '用户登录' %></a>
     </div>
   </nav>
 
@@ -17,7 +17,7 @@
       <h1>专为支付联调<br><em>Epay 网关</em></h1>
       <p>兼容常见 Epay MD5 签名流程，内置虚拟卡、卡 BIN、3DS 密码、余额、订单超时、模拟拒付和异步回调。不会连接真实银行。</p>
       <div class="hero-actions">
-        <a class="button button-primary button-large" href="<%= hasAdminSession ? '/admin' : '/admin/login' %>">打开管理面板</a>
+        <a class="button button-primary button-large" href="<%= hasUserSession ? '/admin' : '/admin/login' %>">打开用户中心</a>
         <a class="button button-ghost button-large" href="/healthz">健康检查</a>
       </div>
       <div class="hero-points">
@@ -33,9 +33,9 @@
   out_trade_no= ORDER-001
   money       = 10.00
   type        = alipay
-  bind_card   = CARD-XXXXXXXX
+  bind_card   = 可选
 
-<span class="terminal-good">→ 302 /pay/T2026...</span>
+<span class="terminal-good">→ 302 /pay/T2026... 登录选卡/直接绑卡</span>
 <span class="terminal-good">← trade_status = TRADE_SUCCESS</span></code></pre>
     </div>
   </section>
@@ -44,12 +44,12 @@
     <article class="feature-card">
       <span class="feature-number">01</span>
       <h2>虚拟卡实验台</h2>
-      <p>创建 BIN、生成符合 Luhn 校验的虚拟卡，随时调整余额、3DS 密码与卡片状态。</p>
+      <p>管理员创建 BIN 并管理余额；普通用户创建自己的虚拟卡并用于支付，账号之间数据隔离。</p>
     </article>
     <article class="feature-card">
       <span class="feature-number">02</span>
       <h2>可控支付结果</h2>
-      <p>支付页只展示订单绑定的卡片。支持拒付、余额不足、卡过期和 3DS 密码错误。</p>
+      <p>已绑定订单只接受指定卡片；未绑定时支持登录选卡或直接输入卡片 ID。支持拒付、余额不足、卡过期和 3DS 密码错误。</p>
     </article>
     <article class="feature-card">
       <span class="feature-number">03</span>

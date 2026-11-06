@@ -4,19 +4,30 @@
   <div class="panel-head"><div><p class="eyebrow">NEW VIRTUAL CARD</p><h2>卡片参数</h2></div><a class="text-link" href="/admin/cards">返回列表</a></div>
   <% if (error) { %><div class="alert alert-danger"><%= error %></div><% } %>
   <% if (!bins.length) { %>
-    <div class="empty-state"><strong>请先创建卡 BIN</strong><p>虚拟卡号需要由 BIN 前缀生成。</p><a class="button button-primary" href="/admin/bins">前往 BIN 管理</a></div>
+    <div class="empty-state">
+      <strong>暂无可用的卡 BIN</strong>
+      <p><%= isAdmin ? '虚拟卡号需要由 BIN 前缀生成，请先创建卡 BIN。' : '请联系管理员创建并启用卡 BIN。' %></p>
+      <% if (isAdmin) { %><a class="button button-primary" href="/admin/bins">前往 BIN 管理</a><% } %>
+    </div>
   <% } else { %>
   <form method="post" action="/admin/cards" class="form-grid card-create-form">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <label class="field field-span-2"><span>选择卡 BIN</span><select name="bin_id" required><option value="">请选择</option><% bins.forEach((bin) => { %><option value="<%= bin.id %>" <%= String(form.bin_id) === String(bin.id) ? 'selected' : '' %>><%= bin.name %> · <%= bin.prefix %> · <%= bin.number_length %> 位</option><% }) %></select></label>
+    <% if (isAdmin) { %>
+      <label class="field field-span-2"><span>所属用户</span><select name="owner_user_id"><% users.forEach((user) => { %><option value="<%= user.id %>" <%= String(form.owner_user_id || currentUser.id) === String(user.id) ? 'selected' : '' %>><%= user.username %> · <%= user.role === 'admin' ? '管理员' : '普通用户' %></option><% }) %></select></label>
+    <% } %>
     <label class="field"><span>初始余额</span><input type="number" name="balance" min="0" step="0.01" value="<%= form.balance || '1000.00' %>" required></label>
     <label class="field"><span>货币</span><input value="由系统设置决定" disabled></label>
     <label class="field"><span>有效期月份</span><input type="number" name="expires_month" min="1" max="12" value="<%= form.expires_month || 12 %>" required></label>
     <label class="field"><span>有效期年份</span><input type="number" name="expires_year" min="<%= new Date().getFullYear() %>" max="<%= new Date().getFullYear() + 30 %>" value="<%= form.expires_year || new Date().getFullYear() + 5 %>" required></label>
     <label class="field"><span>CVV</span><input type="text" name="cvv" inputmode="numeric" pattern="\d{3,4}" value="<%= form.cvv || '123' %>" required></label>
     <label class="field"><span>3DS 密码</span><input type="text" name="pin" minlength="4" maxlength="64" value="<%= form.pin || '123456' %>" required></label>
-    <label class="field"><span>初始状态</span><select name="status"><option value="active" <%= form.status !== 'declined' ? 'selected' : '' %>>可支付</option><option value="declined" <%= form.status === 'declined' ? 'selected' : '' %>>模拟拒付</option><option value="frozen" <%= form.status === 'frozen' ? 'selected' : '' %>>冻结</option></select></label>
-    <label class="field"><span>拒付原因</span><input name="decline_reason" value="<%= form.decline_reason || '风控拒绝' %>" placeholder="状态为模拟拒付时显示"></label>
+    <% if (isAdmin) { %>
+      <label class="field"><span>初始状态</span><select name="status"><option value="active" <%= form.status !== 'declined' && form.status !== 'frozen' ? 'selected' : '' %>>可支付</option><option value="declined" <%= form.status === 'declined' ? 'selected' : '' %>>模拟拒付</option><option value="frozen" <%= form.status === 'frozen' ? 'selected' : '' %>>冻结</option></select></label>
+      <label class="field"><span>拒付原因</span><input name="decline_reason" value="<%= form.decline_reason || '风控拒绝' %>" placeholder="状态为模拟拒付时显示"></label>
+    <% } else { %>
+      <input type="hidden" name="status" value="active">
+    <% } %>
     <div class="form-actions field-span-2"><button class="button button-primary" type="submit">生成虚拟卡</button><a class="button button-ghost" href="/admin/cards">取消</a></div>
   </form>
   <% } %>

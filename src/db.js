@@ -29,7 +29,7 @@ class Database {
     };
   }
 }
-const { encrypt, decrypt } = require('./crypto');
+const { encrypt, decrypt, hashPassword } = require('./crypto');
 
 const DEFAULT_SETTINGS = {
   site_name: 'Epay Test Gateway',
@@ -47,6 +47,16 @@ function migrate(db) {
       value TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('admin', 'user')),
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS bins (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -62,6 +72,7 @@ function migrate(db) {
 
     CREATE TABLE IF NOT EXISTS cards (
       id TEXT PRIMARY KEY,
+      owner_user_id INTEGER REFERENCES users(id),
       bin_id INTEGER NOT NULL REFERENCES bins(id),
       card_number_enc TEXT NOT NULL,
       last4 TEXT NOT NULL,
@@ -147,6 +158,12 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_callback_logs_order ON callback_logs(order_id, attempted_at DESC);
     CREATE INDEX IF NOT EXISTS idx_card_transactions_card ON card_transactions(card_id, created_at DESC);
   `);
+
+  const cardColumns = db.prepare('PRAGMA table_info(cards)').all();
+  if (!cardColumns.some((column) => column.name === 'owner_user_id')) {
+    db.exec('ALTER TABLE cards ADD COLUMN owner_user_id INTEGER REFERENCES users(id)');
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_cards_owner ON cards(owner_user_id, created_at DESC)');
 }
 
 function seed(db, config) {
@@ -158,13 +175,29 @@ function seed(db, config) {
   };
   const transaction = db.transaction(() => {
     for (const [key, value] of Object.entries(defaults)) insertSetting.run(key, value);
-    const count = db.prepare('SELECT COUNT(*) AS count FROM merchants').get().count;
-    if (count === 0) {
+
+    const merchantCount = db.prepare('SELECT COUNT(*) AS count FROM merchants').get().count;
+    if (merchantCount === 0) {
       const now = Date.now();
       db.prepare(`
         INSERT INTO merchants (pid, name, key_enc, is_active, created_at, updated_at)
         VALUES (?, ?, ?, 1, ?, ?)
       `).run(config.defaultMerchantPid, config.defaultMerchantName, encrypt(config.defaultMerchantKey, config.appSecret), now, now);
+    }
+
+    const activeAdmin = db.prepare("SELECT id FROM users WHERE role = 'admin' AND is_active = 1 LIMIT 1").get();
+    if (!activeAdmin) {
+      const now = Date.now();
+      const configuredUser = db.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE').get(config.adminUsername);
+      if (configuredUser) {
+        db.prepare("UPDATE users SET password_hash = ?, role = 'admin', is_active = 1, updated_at = ? WHERE id = ?")
+          .run(hashPassword(config.adminPassword), now, configuredUser.id);
+      } else {
+        db.prepare(`
+          INSERT INTO users (username, password_hash, role, is_active, created_at, updated_at)
+          VALUES (?, ?, 'admin', 1, ?, ?)
+        `).run(config.adminUsername, hashPassword(config.adminPassword), now, now);
+      }
     }
   });
   transaction();
@@ -197,6 +230,18 @@ function setSetting(db, key, value) {
   `).run(key, String(value));
 }
 
+function mapUser(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    username: row.username,
+    role: row.role,
+    isActive: Boolean(row.is_active),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
 function mapMerchant(row, secret, includeKey = true) {
   if (!row) return null;
   return {
@@ -214,6 +259,8 @@ function mapCard(row, secret, includeSecrets = false) {
   if (!row) return null;
   return {
     id: row.id,
+    ownerUserId: row.owner_user_id,
+    ownerUsername: row.owner_username,
     binId: row.bin_id,
     binName: row.bin_name,
     binPrefix: row.bin_prefix,
@@ -269,6 +316,14 @@ function mapOrder(row) {
   };
 }
 
+function userByUsername(db, username) {
+  return mapUser(db.prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE').get(String(username)));
+}
+
+function userById(db, id) {
+  return mapUser(db.prepare('SELECT * FROM users WHERE id = ?').get(Number(id)));
+}
+
 function merchantByPid(db, secret, pid) {
   const row = db.prepare('SELECT * FROM merchants WHERE pid = ?').get(String(pid));
   return mapMerchant(row, secret);
@@ -281,8 +336,11 @@ function merchantById(db, secret, id) {
 
 function cardById(db, secret, id, includeSecrets = true) {
   const row = db.prepare(`
-    SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type
-    FROM cards c JOIN bins b ON b.id = c.bin_id WHERE c.id = ?
+    SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, u.username AS owner_username
+    FROM cards c
+    JOIN bins b ON b.id = c.bin_id
+    LEFT JOIN users u ON u.id = c.owner_user_id
+    WHERE c.id = ?
   `).get(String(id));
   return mapCard(row, secret, includeSecrets);
 }
@@ -303,9 +361,12 @@ module.exports = {
   getSetting,
   getAllSettings,
   setSetting,
+  mapUser,
   mapMerchant,
   mapCard,
   mapOrder,
+  userByUsername,
+  userById,
   merchantByPid,
   merchantById,
   cardById,

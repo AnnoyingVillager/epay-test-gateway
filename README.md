@@ -1,17 +1,19 @@
 # Epay Test Gateway
 
-一个自托管、面向开发联调与自动化测试的 Epay 兼容网关。内置虚拟银行卡、卡 BIN、3DS 密码、余额、订单超时、模拟拒付/退单、异步回调和管理面板。
+一个自托管、面向开发联调与自动化测试的 Epay 兼容网关。内置用户分权、虚拟银行卡、卡 BIN、3DS 密码、余额、订单超时、模拟拒付/退单、异步回调和管理面板。
 
 > **仅用于测试环境。** 本项目不会连接真实银行或支付网络，也不应处理真实银行卡、密码或生产资金。
 
 ## 功能
 
 - 兼容常见 Epay 风格的 `/submit.php`、`/api.php`、`/mapi.php` 与 MD5 签名流程
-- 管理面板：仪表盘、虚拟卡、卡 BIN、订单、商户、系统设置
+- 用户管理：区分管理员与普通用户；普通用户仅能创建、查看自己的卡片并消费
+- 管理面板：仪表盘、虚拟卡、卡 BIN、订单、用户、商户、系统设置
 - 创建符合 Luhn 校验的虚拟卡号，支持自定义 BIN 前缀、品牌、卡号长度
-- 修改虚拟卡余额、有效期、CVV、3DS 密码和状态
+- 管理员可修改虚拟卡余额、有效期、CVV、3DS 密码、状态，并记录手工消费
 - 一键“模拟拒付”，并可模拟已支付订单的拒付/退单
-- 订单绑卡：支付页只显示并接受订单指定的虚拟卡
+- 订单绑卡：已绑定订单只接受指定虚拟卡；未绑定订单可登录选卡或直接输入卡片 ID
+- 未携带 `bind_card` 的 `/submit.php` 请求不再报错，会跳转到绑卡支付页
 - 订单超时倒计时、自动过期和服务端二次校验
 - 支付成功、失败、超时、拒付均生成签名回调；成功或失败都按 Epay 参数返回商户
 - SQLite 数据持久化，单容器部署
@@ -20,7 +22,7 @@
 ## 已发布镜像
 
 - `ghcr.io/annoyingvillager/epay-test-gateway:latest`
-- `ghcr.io/annoyingvillager/epay-test-gateway:1.0.1` 和 `:1.0`（对应 Git 标签 `v1.0.1`）
+- `ghcr.io/annoyingvillager/epay-test-gateway:1.1.0` 和 `:1.1`（对应 Git 标签 `v1.1.0`）
 - 同时提供 `linux/amd64` 与 `linux/arm64` 多架构镜像
 
 ## 无需克隆源码部署
@@ -63,7 +65,7 @@ docker compose up -d
 - 管理面板：<http://localhost:3001/admin>
 - 健康检查：<http://localhost:3001/healthz>
 
-管理员默认账号为 `admin`，密码来自 `ADMIN_PASSWORD`。
+初始管理员账号为 `admin`，首次启动时密码来自 `ADMIN_PASSWORD`。之后可在“用户”页面创建普通用户或其他管理员。
 
 生成 `APP_SECRET`：
 
@@ -118,13 +120,38 @@ docker run -d \
 
 ## 首次配置
 
-1. 登录管理面板。
+1. 使用 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 登录管理面板。
 2. 打开 **卡 BIN**，创建例如 `424242`、长度 16 的测试 BIN。
-3. 打开 **虚拟卡 → 创建虚拟卡**，设置余额和 3DS 密码。
-4. 进入卡片详情，复制 `CARD-...` 卡片 ID。
-5. 使用该 ID 作为商户下单参数 `bind_card`。
-6. 用 `/api.php` 或 `/submit.php` 发起订单，打开返回的支付页。
-7. 输入卡片详情中的 3DS 密码完成支付；后台可以切换“模拟拒付”。
+3. 打开 **用户**，创建普通用户账号，或让管理员直接创建卡片并指定所属用户。
+4. 普通用户登录后打开 **虚拟卡 → 创建虚拟卡**，设置初始余额和 3DS 密码。
+5. 用 `/api.php` 或 `/submit.php` 发起订单。
+6. 如果传入 `bind_card=CARD-...`，支付页直接显示指定卡片。
+7. 如果未传 `bind_card`，支付页会提示登录后选卡，或直接输入卡片 ID 绑卡。
+8. 输入卡片详情中的 3DS 密码完成支付；管理员可在后台调额、手工消费或切换“模拟拒付”。
+
+## 用户与权限
+
+| 功能 | 管理员 | 普通用户 |
+| --- | --- | --- |
+| 创建卡 BIN | 是 | 否 |
+| 创建虚拟卡 | 是，可指定所属用户 | 是，只能创建到自己的账号 |
+| 查看虚拟卡 | 全部 | 仅自己的卡片 |
+| 修改余额、3DS、CVV、状态 | 是 | 否 |
+| 手工消费 | 是 | 否 |
+| 绑卡支付消费 | 是 | 是，只能选择自己的卡片 |
+| 查看订单 | 全部 | 仅自己卡片关联的订单 |
+| 用户、商户、系统设置 | 是 | 否 |
+
+管理员不能停用当前账号，也不能移除最后一个启用的管理员。
+
+## 未绑定卡片的支付流程
+
+`bind_card` 现在是可选参数。未携带卡片的订单仍会正常创建，`/submit.php` 返回 `302` 到支付页，而不是返回 `CARD_BINDING_REQUIRED`。支付页提供两种方式：
+
+1. 使用管理员或普通用户账号登录，然后从自己的卡片中选择一张支付。
+2. 不登录，直接输入管理员提供的 `CARD-...` 卡片 ID 绑卡后支付。
+
+一旦订单绑定卡片，页面只接受该卡片，不能切换到其他卡。
 
 ## 商户接入
 
@@ -148,6 +175,7 @@ GET /api.php?act=order&pid=1001&type=alipay
   &name=Test+Order
   &money=10.00
   &sitename=Demo+Shop
+  # bind_card 可选；不传时进入登录选卡/直接绑卡页面
   &bind_card=CARD-1234567890
   &timeout=900
   &sign=<MD5>
@@ -166,9 +194,12 @@ GET /api.php?act=order&pid=1001&type=alipay
   "urlscheme": "http://localhost:3001/pay/T20261106120000A1B2C3D4E5",
   "qrcode": "http://localhost:3001/pay/T20261106120000A1B2C3D4E5",
   "money": "10.00",
-  "status": "pending"
+  "status": "pending",
+  "bind_card": "CARD-1234567890"
 }
 ```
+
+未传 `bind_card` 时，响应中的 `bind_card` 为 `null`，`payurl` 指向绑卡支付页。
 
 错误响应：
 
@@ -180,19 +211,19 @@ GET /api.php?act=order&pid=1001&type=alipay
 
 ### 浏览器提交订单
 
-`GET` 或 `POST /submit.php`，参数与 API 相同，但不要求 `act`。成功时返回 `302` 跳转到支付页。
+`GET` 或 `POST /submit.php`，参数与 API 相同，但不要求 `act`。成功时返回 `302` 跳转到支付页；缺少 `bind_card` 时跳转到绑卡页面。
 
 ### 扩展参数
 
 | 参数 | 必填 | 说明 |
 | --- | --- | --- |
-| `bind_card` | 默认必填 | 虚拟卡 ID，例如 `CARD-AB12CD34EF`；也可使用别名 `card_id` |
+| `bind_card` | 否 | 预绑定虚拟卡 ID，例如 `CARD-AB12CD34EF`；也可使用别名 `card_id`。不传时在支付页绑卡 |
 | `timeout` | 否 | 订单超时秒数，范围 60-86400 |
 | `expires_in` | 否 | `timeout` 的别名 |
 | `param` | 否 | 商户透传参数，会原样出现在回调中 |
 | `sitename` | 否 | 站点名称 |
 
-这些扩展参数都需要参与签名。系统设置中可以关闭“强制订单绑定虚拟卡”，但不建议在测试流程中关闭。
+这些扩展参数都需要参与签名。系统设置中的“未绑卡订单允许在支付页绑定虚拟卡”默认开启；关闭后，未绑定订单只能提示商户重新下单。
 
 ### 签名算法
 
@@ -282,11 +313,12 @@ errcode=CHARGEBACK
 ## 管理面板概览
 
 - **仪表盘**：卡片余额、成功交易额、待支付/失败订单
-- **虚拟卡**：完整测试卡号、CVV、3DS 密码、余额、状态、卡片流水
-- **卡 BIN**：BIN 前缀、品牌、卡类型、国家、卡号长度
-- **订单**：支付状态、绑定卡、回调状态、回调日志、手动重发
+- **虚拟卡**：完整测试卡号、CVV、3DS 密码、余额、状态、所属用户、卡片流水
+- **卡 BIN**：仅管理员可创建和维护 BIN 前缀、品牌、卡类型、国家、卡号长度
+- **订单**：管理员查看全部订单，普通用户仅查看自己卡片关联的订单
+- **用户**：创建管理员/普通用户、启停、重置密码、调整角色
 - **商户**：PID、MD5 密钥、启停、密钥轮换
-- **设置**：站点名称、默认超时、结算货币、支付类型、强制绑卡
+- **设置**：站点名称、默认超时、结算货币、支付类型、支付页绑卡
 
 ## 环境变量
 
@@ -296,8 +328,8 @@ errcode=CHARGEBACK
 | `APP_PORT` | `3001` | Docker Compose 映射到宿主机的端口 |
 | `BASE_URL` | 空 | 对外公开地址；为空时根据请求自动识别 |
 | `DB_PATH` | `/app/data/epay.db` | SQLite 数据库文件 |
-| `ADMIN_USERNAME` | `admin` | 管理员账号 |
-| `ADMIN_PASSWORD` | `change-me-now` | 管理员密码，必须修改 |
+| `ADMIN_USERNAME` | `admin` | 首次启动时创建的初始管理员账号 |
+| `ADMIN_PASSWORD` | `change-me-now` | 首次启动时创建的初始管理员密码，必须修改 |
 | `ADMIN_SESSION_HOURS` | `12` | 管理会话有效期 |
 | `APP_SECRET` | 开发回退值 | 会话与卡片数据加密密钥，生产必须设置 |
 | `DEFAULT_MERCHANT_PID` | `1001` | 首次启动创建的商户 PID |
@@ -309,7 +341,7 @@ errcode=CHARGEBACK
 | `TRUST_PROXY` | `false` | 反向代理后设为 `true` |
 | `COOKIE_SECURE` | `false` | HTTPS 部署时设为 `true` |
 
-`DEFAULT_MERCHANT_*` 只在数据库没有商户时用于首次初始化。之后请在管理面板维护。
+`DEFAULT_MERCHANT_*` 只在数据库没有商户时用于首次初始化。`ADMIN_USERNAME` / `ADMIN_PASSWORD` 只在没有可用管理员时用于初始化；之后请在用户管理中维护账号。
 
 ## 数据持久化与备份
 
@@ -339,7 +371,7 @@ npm test
 
 ## 发布到 GitHub 与 Docker 镜像
 
-仓库已包含 `.github/workflows/docker.yml`。推送 `main` 分支会构建并推送 `ghcr.io/<owner>/<repo>:latest`；推送 `v1.0.1` 这类标签会额外生成版本标签。
+仓库已包含 `.github/workflows/docker.yml`。推送 `main` 分支会构建并推送 `ghcr.io/<owner>/<repo>:latest`；推送 `v1.1.0` 这类标签会额外生成版本标签。
 
 ```bash
 git init -b main
@@ -347,8 +379,8 @@ git add .
 git commit -m "feat: add Epay test gateway"
 gh auth login
 gh repo create epay-test-gateway --public --source=. --remote=origin --push
-git tag v1.0.1
-git push origin v1.0.1
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
 首次使用 GHCR 时，Actions 使用仓库的 `GITHUB_TOKEN` 推送。部署机器拉取公开镜像：
@@ -366,7 +398,9 @@ docker pull ghcr.io/<owner>/epay-test-gateway:latest
 - 对外暴露时使用 HTTPS 反向代理，并设置 `COOKIE_SECURE=true`、`TRUST_PROXY=true`。
 - 为管理面板增加网络访问限制或 VPN。
 - 卡片号、CVV 和 3DS 密码使用 AES-256-GCM 加密后存储；加密密钥从 `APP_SECRET` 派生。
+- 用户密码使用 scrypt 加盐哈希存储，不保存明文。
 - 管理表单具有 CSRF 防护、登录限流和单次支付限流。
+- 普通用户的卡片、订单和绑卡选择均按账号隔离。
 - 不使用本项目处理真实持卡人数据。
 
 ## 兼容性说明

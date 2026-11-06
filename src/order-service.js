@@ -96,10 +96,6 @@ function createOrder({ req, db, config, input, merchant, createdVia }) {
   }
 
   const bindCard = String(params.bind_card || params.card_id || '').trim();
-  const requireCardBinding = getSetting(db, 'require_card_binding', '1') === '1';
-  if (requireCardBinding && !bindCard) {
-    throw new EpayError('bind_card is required. Create a card in the admin panel and pass bind_card=CARD-...', 'CARD_BINDING_REQUIRED');
-  }
   if (bindCard) {
     const card = cardById(db, config.appSecret, bindCard, false);
     if (!card) throw new EpayError('Bound card was not found', 'CARD_NOT_FOUND');
@@ -154,8 +150,9 @@ function markOrderPaid({ db, config, tradeNo, pin }) {
       return { terminal: true, code: 'ORDER_EXPIRED', message: 'Order expired', order: orderByTradeNo(db, tradeNo) };
     }
 
+    if (!row.card_id) throw new EpayError('Bind a virtual card before payment', 'CARD_BINDING_REQUIRED', 409);
     const card = cardById(db, config.appSecret, row.card_id, true);
-    if (!card) return { terminal: true, code: 'CARD_NOT_FOUND', message: 'Bound card not found', order: orderByTradeNo(db, tradeNo) };
+    if (!card) throw new EpayError('Bound card not found', 'CARD_NOT_FOUND', 409);
 
     if (card.status !== 'active') {
       db.prepare("UPDATE orders SET status = 'FAILED', closed_at = ?, callback_event = 'CARD_DECLINED' WHERE id = ? AND status = 'PENDING'")

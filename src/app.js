@@ -5,7 +5,7 @@ const rateLimit = require('express-rate-limit');
 const { openDatabase, getSetting } = require('./db');
 const { NotificationService } = require('./notifications');
 const { sweepExpiredOrders } = require('./order-service');
-const { adminSessionFromRequest } = require('./admin-auth');
+const { userSessionFromRequest } = require('./admin-auth');
 const publicRouter = require('./public-router');
 const adminRouter = require('./admin-router');
 const { formatMinor } = require('./epay');
@@ -62,7 +62,10 @@ function createApp(options) {
   }));
 
   app.use((req, res, next) => {
-    const session = adminSessionFromRequest(req, config);
+    const session = userSessionFromRequest(req, db, config);
+    req.currentUser = session?.user || null;
+    res.locals.currentUser = session?.user || null;
+    res.locals.hasUserSession = Boolean(session);
     res.locals.hasAdminSession = Boolean(session);
     res.locals.csrfToken = session?.payload?.csrf || '';
     res.locals.currentPath = req.path;
@@ -86,6 +89,8 @@ function createApp(options) {
   });
 
   app.use('/pay/:tradeNo/confirm', payLimiter);
+  app.use('/pay/:tradeNo/bind', payLimiter);
+  app.use('/pay/:tradeNo/login', loginLimiter);
   app.use('/admin/login', loginLimiter);
   app.use('/admin', adminRouter({ db, config, notification, logger }));
   app.use('/', publicRouter.router({ db, config, notification }));

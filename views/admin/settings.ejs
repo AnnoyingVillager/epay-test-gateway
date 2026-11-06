@@ -11,7 +11,7 @@
         <label class="field"><span>默认结算货币</span><input name="default_currency" value="<%= settings.default_currency %>" maxlength="3" pattern="[A-Za-z]{3}" required></label>
       </div>
       <label class="field"><span>支持的支付类型</span><input name="supported_types" value="<%= settings.supported_types %>" required placeholder="alipay,wxpay,qqpay"></label>
-      <label class="field checkbox-field"><input type="checkbox" name="require_card_binding" value="1" <%= settings.require_card_binding === '1' ? 'checked' : '' %>><span>强制订单绑定虚拟卡</span></label>
+      <label class="field checkbox-field"><input type="checkbox" name="require_card_binding" value="1" <%= settings.require_card_binding === '1' ? 'checked' : '' %>><span>未绑卡订单允许在支付页绑定虚拟卡</span></label>
       <div class="form-actions"><button class="button button-primary" type="submit">保存系统设置</button></div>
     </form>
     <p class="form-hint">商户也可通过订单参数 <code>timeout</code> 或 <code>expires_in</code> 覆盖超时时间，范围 60-86400 秒。该参数需要参与签名。</p>
@@ -24,7 +24,7 @@
       <div><dt>提交入口</dt><dd><code>/submit.php</code></dd></div>
       <div><dt>API 入口</dt><dd><code>/api.php</code></dd></div>
       <div><dt>数据库</dt><dd><code><%= config.databasePath %></code></dd></div>
-      <div><dt>管理员账号</dt><dd><code><%= config.adminUsername %></code></dd></div>
+      <div><dt>初始管理员</dt><dd><code><%= config.adminUsername %></code></dd></div>
       <div><dt>会话有效期</dt><dd><%= config.adminSessionHours %> 小时</dd></div>
       <div><dt>回调重试</dt><dd><%= config.notifyRetryCount %> 次</dd></div>
     </dl>

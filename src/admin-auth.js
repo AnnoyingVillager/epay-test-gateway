@@ -1,15 +1,24 @@
-const { createAdminSession, verifyAdminSession, parseCookies, timingSafeEqualText } = require('./crypto');
+const {
+  createUserSession,
+  verifyUserSession,
+  parseCookies,
+  timingSafeEqualText,
+  verifyPassword
+} = require('./crypto');
+const { mapUser, userById } = require('./db');
 
-const COOKIE_NAME = 'epay_admin';
+const COOKIE_NAME = 'epay_session';
 
-function adminSessionFromRequest(req, config) {
+function userSessionFromRequest(req, db, config) {
   const cookies = parseCookies(req.headers.cookie || '');
-  const payload = verifyAdminSession(cookies[COOKIE_NAME], config.appSecret, config.adminUsername);
+  const payload = verifyUserSession(cookies[COOKIE_NAME], config.appSecret);
   if (!payload) return null;
-  return { payload, token: cookies[COOKIE_NAME] };
+  const user = userById(db, payload.uid);
+  if (!user || !user.isActive || user.username !== payload.u || user.role !== payload.r) return null;
+  return { payload, user, token: cookies[COOKIE_NAME] };
 }
 
-function setAdminCookie(res, config, token) {
+function setSessionCookie(res, config, token) {
   const maxAge = config.adminSessionHours * 60 * 60;
   const parts = [
     `${COOKIE_NAME}=${encodeURIComponent(token)}`,
@@ -22,26 +31,42 @@ function setAdminCookie(res, config, token) {
   res.append('Set-Cookie', parts.join('; '));
 }
 
-function clearAdminCookie(res) {
+function clearSessionCookie(res) {
   res.append('Set-Cookie', `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
 }
 
-function createSession(config) {
-  return createAdminSession(config.adminUsername, config.appSecret, config.adminSessionHours * 60 * 60);
+function createSession(user, config) {
+  return createUserSession(user, config.appSecret, config.adminSessionHours * 60 * 60);
 }
 
-function requireAdmin(req, res, next) {
-  const session = adminSessionFromRequest(req, req.app.locals.config);
+function requireUser(req, res, next) {
+  const session = userSessionFromRequest(req, req.app.locals.db, req.app.locals.config);
   if (!session) return res.redirect('/admin/login');
-  req.admin = session.payload;
-  res.locals.admin = session.payload;
+  req.user = session.user;
+  req.sessionCsrf = session.payload.csrf;
+  res.locals.currentUser = session.user;
   res.locals.csrfToken = session.payload.csrf;
   next();
 }
 
+function requireRole(role) {
+  return (req, res, next) => {
+    if (!req.user) return res.redirect('/admin/login');
+    if (req.user.role !== role) {
+      return res.status(403).render('error', {
+        title: '没有访问权限',
+        message: role === 'admin' ? '该操作仅限管理员。' : '当前账号无权访问该页面。',
+        statusCode: 403
+      });
+    }
+    next();
+  };
+}
+
 function verifyCsrf(req, res, next) {
-  const session = req.admin;
-  if (!session || !timingSafeEqualText(session.csrf, String(req.body?._csrf || ''))) {
+  const session = req.user;
+  const token = req.sessionCsrf || '';
+  if (!session || !timingSafeEqualText(token, String(req.body?._csrf || ''))) {
     return res.status(403).render('error', {
       title: '无效的安全令牌',
       message: '页面已过期或请求来源无效，请刷新后重试。',
@@ -51,17 +76,20 @@ function verifyCsrf(req, res, next) {
   next();
 }
 
-function validAdminCredentials(config, username, password) {
-  return timingSafeEqualText(username, config.adminUsername) && timingSafeEqualText(password, config.adminPassword);
+function validUserCredentials(db, username, password) {
+  const row = db.prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE').get(String(username));
+  if (!row || !row.is_active || !verifyPassword(password, row.password_hash)) return null;
+  return mapUser(row);
 }
 
 module.exports = {
   COOKIE_NAME,
-  adminSessionFromRequest,
-  setAdminCookie,
-  clearAdminCookie,
+  userSessionFromRequest,
+  setSessionCookie,
+  clearSessionCookie,
   createSession,
-  requireAdmin,
+  requireUser,
+  requireRole,
   verifyCsrf,
-  validAdminCredentials
+  validUserCredentials
 };

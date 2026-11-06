@@ -10,16 +10,17 @@
     <a class="button button-primary" href="/admin/cards/new">+ 创建虚拟卡</a>
   </div>
   <% if (!cards.length) { %>
-    <div class="empty-state"><strong>没有找到虚拟卡</strong><p>创建 BIN 后即可生成测试卡。</p><a class="button button-primary button-small" href="/admin/cards/new">创建虚拟卡</a></div>
+    <div class="empty-state"><strong>没有找到虚拟卡</strong><p><%= isAdmin ? '创建 BIN 后即可生成测试卡。' : '请联系管理员创建可用的卡 BIN，然后创建虚拟卡。' %></p><a class="button button-primary button-small" href="/admin/cards/new">创建虚拟卡</a></div>
   <% } else { %>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>卡片</th><th>BIN</th><th>余额</th><th>状态</th><th>有效期</th><th>创建时间</th><th></th></tr></thead>
+      <thead><tr><th>卡片</th><th>BIN</th><% if (isAdmin) { %><th>所属用户</th><% } %><th>余额</th><th>状态</th><th>有效期</th><th>创建时间</th><th></th></tr></thead>
       <tbody>
       <% cards.forEach((card) => { %>
         <tr>
           <td><div class="table-primary"><span class="mini-card"><%= card.brand.slice(0, 1) %></span><span><strong><%= card.id %></strong><small>•••• <%= card.last4 %></small></span></div></td>
           <td><%= card.binName %><br><small><code><%= card.binPrefix %></code></small></td>
+          <% if (isAdmin) { %><td><%= card.ownerUsername || '未分配' %></td><% } %>
           <td><strong><%= card.currency %> <%= formatMinor(card.balanceMinor) %></strong></td>
           <td><span class="pill <%= card.status === 'active' ? 'pill-success' : 'pill-danger' %>"><%= statusLabel(card.status) %></span></td>
           <td><%= String(card.expiresMonth).padStart(2, '0') %>/<%= card.expiresYear %></td>

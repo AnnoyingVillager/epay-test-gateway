@@ -5,32 +5,34 @@
       <span class="brand-mark">E</span>
       <span><strong>Epay</strong><small>Test Gateway</small></span>
     </div>
-    <p class="eyebrow">ADMIN CONSOLE</p>
-    <h1>管理后台登录</h1>
-    <p class="login-subtitle">管理虚拟卡、卡 BIN、商户、订单与支付回调。</p>
+    <p class="eyebrow">ACCOUNT LOGIN</p>
+    <h1>账户登录</h1>
+    <p class="login-subtitle">管理员管理网关，普通用户创建自己的虚拟卡并完成支付。</p>
     <% if (error) { %><div class="alert alert-danger"><%= error %></div><% } %>
     <form method="post" action="/admin/login" class="stack-form">
+      <input type="hidden" name="next" value="<%= next %>">
       <label class="field">
-        <span>管理员账号</span>
-        <input type="text" name="username" autocomplete="username" required autofocus placeholder="admin">
+        <span>用户名</span>
+        <input type="text" name="username" autocomplete="username" required autofocus placeholder="用户名">
       </label>
       <label class="field">
-        <span>管理员密码</span>
-        <input type="password" name="password" autocomplete="current-password" required placeholder="输入 ADMIN_PASSWORD">
+        <span>密码</span>
+        <input type="password" name="password" autocomplete="current-password" required placeholder="输入密码">
       </label>
-      <button class="button button-primary button-block" type="submit">登录管理面板</button>
+      <button class="button button-primary button-block" type="submit">登录</button>
     </form>
-    <p class="login-hint">账号密码由 <code>ADMIN_USERNAME</code> 与 <code>ADMIN_PASSWORD</code> 环境变量配置。</p>
+    <p class="login-hint">初始管理员账号由 <code>ADMIN_USERNAME</code> 与 <code>ADMIN_PASSWORD</code> 首次启动时创建，之后可在用户管理中新增普通用户或其他管理员。</p>
   </section>
   <aside class="login-aside">
     <div class="login-aside-copy">
       <span class="status-dot">SELF-HOSTED</span>
       <h2>一个专为支付联调设计的沙箱。</h2>
       <ul>
+        <li>管理员与普通用户分权</li>
         <li>Luhn 校验虚拟卡与自定义 BIN</li>
         <li>余额、3DS 密码、拒付状态控制</li>
+        <li>登录选卡或直接绑卡支付</li>
         <li>订单倒计时与签名回调</li>
-        <li>SQLite 数据持久化</li>
       </ul>
     </div>
   </aside>

@@ -1,11 +1,11 @@
 const express = require('express');
+const { normalizeParams, formatMinor } = require('./epay');
 const {
-  normalizeParams
-} = require('./epay');
-const {
+  getSetting,
   merchantByPid,
   cardById,
-  orderByTradeNo
+  orderByTradeNo,
+  mapCard
 } = require('./db');
 const {
   EpayError,
@@ -16,7 +16,11 @@ const {
   expireOrder,
   renderOrderContext
 } = require('./order-service');
-const { formatMinor } = require('./epay');
+const {
+  validUserCredentials,
+  createSession,
+  setSessionCookie
+} = require('./admin-auth');
 
 function router({ db, config, notification }) {
   const route = express.Router();
@@ -55,7 +59,8 @@ function router({ db, config, notification }) {
         urlscheme: payurl,
         qrcode: payurl,
         money: formatMinor(order.moneyMinor),
-        status: order.status.toLowerCase()
+        status: order.status.toLowerCase(),
+        bind_card: order.cardId || null
       });
     } catch (error) {
       const epayError = error instanceof EpayError ? error : new EpayError('Internal server error', 'SYSTEM_ERROR', 500);
@@ -90,30 +95,126 @@ function router({ db, config, notification }) {
   route.get('/submit.php', handleSubmit);
   route.post('/submit.php', handleSubmit);
 
+  function userSelectableCards(currentUser) {
+    if (!currentUser) return [];
+    if (currentUser.role === 'admin') {
+      return db.prepare(`
+        SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, u.username AS owner_username
+        FROM cards c
+        JOIN bins b ON b.id = c.bin_id
+        LEFT JOIN users u ON u.id = c.owner_user_id
+        ORDER BY CASE c.status WHEN 'active' THEN 0 ELSE 1 END, c.created_at DESC
+        LIMIT 300
+      `).all().map((row) => mapCard(row, config.appSecret, false));
+    }
+    return db.prepare(`
+      SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, u.username AS owner_username
+      FROM cards c
+      JOIN bins b ON b.id = c.bin_id
+      LEFT JOIN users u ON u.id = c.owner_user_id
+      WHERE c.owner_user_id = ?
+      ORDER BY CASE c.status WHEN 'active' THEN 0 ELSE 1 END, c.created_at DESC
+      LIMIT 300
+    `).all(currentUser.id).map((row) => mapCard(row, config.appSecret, false));
+  }
+
+  function orderMerchant(order) {
+    return merchantByPid(db, config.appSecret, order.merchantPid);
+  }
+
+  function remainingSeconds(order) {
+    return Math.max(0, Math.floor((order.expiresAt - Date.now()) / 1000));
+  }
+
+  function renderBinding(req, res, order, { error = null, statusCode = 200 } = {}) {
+    const merchant = orderMerchant(order);
+    return res.status(statusCode).render('payment-bind', {
+      title: '绑定虚拟卡支付',
+      order: renderOrderContext(order, merchant),
+      currentUser: req.currentUser,
+      userCards: userSelectableCards(req.currentUser),
+      error,
+      remainingSeconds: remainingSeconds(order)
+    });
+  }
+
+  function renderPayment(req, res, order, { error = null, statusCode = 200 } = {}) {
+    const merchant = orderMerchant(order);
+    const card = order.cardId ? cardById(db, config.appSecret, order.cardId, false) : null;
+    const allowBinding = getSetting(db, 'require_card_binding', '1') === '1';
+    if (!card && order.status === 'PENDING' && allowBinding) {
+      return renderBinding(req, res, order, { error, statusCode });
+    }
+    return res.status(statusCode).render('payment', {
+      title: '安全支付',
+      order: renderOrderContext(order, merchant),
+      card,
+      error,
+      remainingSeconds: remainingSeconds(order)
+    });
+  }
+
+  function loadOrder(req, res) {
+    let order = orderByTradeNo(db, req.params.tradeNo);
+    if (!order) {
+      res.status(404).render('payment-error', {
+        title: '订单不存在',
+        message: '未找到该支付订单，请返回商户重新下单。',
+        code: 'ORDER_NOT_FOUND',
+        returnUrl: null
+      });
+      return null;
+    }
+    if (order.status === 'PENDING' && order.expiresAt <= Date.now()) {
+      if (expireOrder({ db, tradeNo: order.tradeNo })) notification.enqueue(order.id);
+      order = orderByTradeNo(db, req.params.tradeNo);
+    }
+    return order;
+  }
+
   route.get('/pay/:tradeNo', (req, res, next) => {
     try {
-      let order = orderByTradeNo(db, req.params.tradeNo);
-      if (!order) {
-        return res.status(404).render('payment-error', {
-          title: '订单不存在',
-          message: '未找到该支付订单，请返回商户重新下单。',
-          code: 'ORDER_NOT_FOUND',
-          returnUrl: null
-        });
+      const order = loadOrder(req, res);
+      if (!order) return;
+      return renderPayment(req, res, order);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  route.post('/pay/:tradeNo/login', (req, res, next) => {
+    try {
+      const order = loadOrder(req, res);
+      if (!order) return;
+      if (order.status !== 'PENDING') return renderPayment(req, res, order);
+      const user = validUserCredentials(db, String(req.body.username || ''), String(req.body.password || ''));
+      if (!user) return renderBinding(req, res, order, { error: '用户名或密码错误，或账号已被停用。', statusCode: 401 });
+      const session = createSession(user, config);
+      setSessionCookie(res, config, session.token);
+      return res.redirect(303, `/pay/${encodeURIComponent(order.tradeNo)}`);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  route.post('/pay/:tradeNo/bind', (req, res, next) => {
+    try {
+      const order = loadOrder(req, res);
+      if (!order) return;
+      if (order.status !== 'PENDING') return renderPayment(req, res, order);
+      if (order.cardId) return res.redirect(303, `/pay/${encodeURIComponent(order.tradeNo)}`);
+
+      const cardId = String(req.body.card_id || '').trim();
+      const card = cardId ? cardById(db, config.appSecret, cardId, false) : null;
+      if (!card) return renderBinding(req, res, order, { error: '未找到该虚拟卡，请检查卡片 ID。', statusCode: 400 });
+      if (req.currentUser?.role === 'user' && card.ownerUserId !== req.currentUser.id) {
+        return renderBinding(req, res, order, { error: '该虚拟卡不属于当前登录用户。', statusCode: 403 });
       }
-      if (order.status === 'PENDING' && order.expiresAt <= Date.now()) {
-        if (expireOrder({ db, tradeNo: order.tradeNo })) notification.enqueue(order.id);
-        order = orderByTradeNo(db, req.params.tradeNo);
-      }
-      const merchant = merchantByPid(db, config.appSecret, order.merchantPid);
-      const card = order.cardId ? cardById(db, config.appSecret, order.cardId, false) : null;
-      res.render('payment', {
-        title: '安全支付',
-        order: renderOrderContext(order, merchant),
-        card,
-        error: null,
-        remainingSeconds: Math.max(0, Math.floor((order.expiresAt - Date.now()) / 1000))
-      });
+
+      const updated = db.prepare("UPDATE orders SET card_id = ? WHERE id = ? AND status = 'PENDING' AND card_id IS NULL")
+        .run(card.id, order.id).changes;
+      if (!updated) return res.redirect(303, `/pay/${encodeURIComponent(order.tradeNo)}`);
+      return res.redirect(303, `/pay/${encodeURIComponent(order.tradeNo)}`);
     } catch (error) {
       next(error);
     }
@@ -121,9 +222,14 @@ function router({ db, config, notification }) {
 
   route.post('/pay/:tradeNo/confirm', (req, res, next) => {
     try {
+      let order = loadOrder(req, res);
+      if (!order) return;
+      if (order.status === 'PENDING' && !order.cardId) {
+        return res.redirect(303, `/pay/${encodeURIComponent(order.tradeNo)}`);
+      }
       const result = markOrderPaid({ db, config, tradeNo: req.params.tradeNo, pin: String(req.body.pin || '') });
-      const order = result.order;
-      const merchant = merchantByPid(db, config.appSecret, order.merchantPid);
+      order = result.order;
+      const merchant = orderMerchant(order);
       if (result.wrongPin) {
         const card = cardById(db, config.appSecret, order.cardId, false);
         return res.status(401).render('payment', {
@@ -131,7 +237,7 @@ function router({ db, config, notification }) {
           order: renderOrderContext(order, merchant),
           card,
           error: result.message,
-          remainingSeconds: Math.max(0, Math.floor((order.expiresAt - Date.now()) / 1000))
+          remainingSeconds: remainingSeconds(order)
         });
       }
       notification.enqueue(order.id);
@@ -143,7 +249,7 @@ function router({ db, config, notification }) {
       if (error instanceof EpayError && error.terminal) {
         const order = orderByTradeNo(db, req.params.tradeNo);
         if (order) {
-          const merchant = merchantByPid(db, config.appSecret, order.merchantPid);
+          const merchant = orderMerchant(order);
           notification.enqueue(order.id);
           const params = notification.publicReturnParams(order, merchant);
           const target = new URL(order.returnUrl);

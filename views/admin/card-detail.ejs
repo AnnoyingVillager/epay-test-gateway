@@ -16,37 +16,60 @@
       <div><span>3DS 密码</span><code><%= card.pin %></code><button type="button" class="copy-button" data-copy="<%= card.pin %>">复制</button></div>
       <div><span>CVV</span><code><%= card.cvv %></code><button type="button" class="copy-button" data-copy="<%= card.cvv %>">复制</button></div>
     </div>
-    <div class="alert alert-info"><strong>绑定参数：</strong>商户下单时传入 <code>bind_card=<%= card.id %></code>，支付页将只允许使用这张卡。</div>
+    <div class="alert alert-info"><strong>支付绑定：</strong>商户可传入 <code>bind_card=<%= card.id %></code> 指定此卡；未指定时可在支付页登录选卡或直接填写卡片 ID。</div>
     <div class="button-row">
-      <form method="post" action="/admin/cards/<%= card.id %>/decline">
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <input type="hidden" name="reason" value="模拟拒付">
-        <button class="button <%= card.status === 'declined' ? 'button-primary' : 'button-danger' %>" type="submit"><%= card.status === 'declined' ? '恢复可支付' : '模拟拒付' %></button>
-      </form>
+      <% if (isAdmin) { %>
+        <form method="post" action="/admin/cards/<%= card.id %>/decline">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="reason" value="模拟拒付">
+          <button class="button <%= card.status === 'declined' ? 'button-primary' : 'button-danger' %>" type="submit"><%= card.status === 'declined' ? '恢复可支付' : '模拟拒付' %></button>
+        </form>
+      <% } %>
       <a class="button button-ghost" href="/admin/orders?q=<%= encodeURIComponent(card.id) %>">查看卡片订单</a>
     </div>
   </section>
 
   <section class="panel">
-    <div class="panel-head"><div><p class="eyebrow">CARD SETTINGS</p><h2>修改卡片</h2></div><span class="pill <%= card.status === 'active' ? 'pill-success' : 'pill-danger' %>"><%= statusLabel(card.status) %></span></div>
-    <form method="post" action="/admin/cards/<%= card.id %>/update" class="stack-form">
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <div class="form-row">
-        <label class="field"><span>余额</span><input type="number" name="balance" min="0" step="0.01" value="<%= formatMinor(card.balanceMinor) %>" required></label>
-        <label class="field"><span>状态</span><select name="status"><option value="active" <%= card.status === 'active' ? 'selected' : '' %>>可支付</option><option value="declined" <%= card.status === 'declined' ? 'selected' : '' %>>模拟拒付</option><option value="frozen" <%= card.status === 'frozen' ? 'selected' : '' %>>冻结</option></select></label>
-      </div>
-      <label class="field"><span>拒付原因</span><input name="decline_reason" value="<%= card.declineReason || '风控拒绝' %>"></label>
-      <div class="form-row">
-        <label class="field"><span>有效期月份</span><input type="number" name="expires_month" min="1" max="12" value="<%= card.expiresMonth %>" required></label>
-        <label class="field"><span>有效期年份</span><input type="number" name="expires_year" min="2020" max="2099" value="<%= card.expiresYear %>" required></label>
-      </div>
-      <div class="form-row">
-        <label class="field"><span>3DS 密码</span><input type="text" name="pin" minlength="4" maxlength="64" value="<%= card.pin %>" required></label>
-        <label class="field"><span>CVV</span><input type="text" name="cvv" pattern="\d{3,4}" value="<%= card.cvv %>" required></label>
-      </div>
-      <div class="form-actions"><button class="button button-primary" type="submit">保存卡片设置</button></div>
-    </form>
+    <div class="panel-head"><div><p class="eyebrow">CARD SETTINGS</p><h2><%= isAdmin ? '修改卡片' : '卡片信息' %></h2></div><span class="pill <%= card.status === 'active' ? 'pill-success' : 'pill-danger' %>"><%= statusLabel(card.status) %></span></div>
+    <% if (isAdmin) { %>
+      <form method="post" action="/admin/cards/<%= card.id %>/update" class="stack-form">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="form-row">
+          <label class="field"><span>所属用户</span><select name="owner_user_id"><% users.forEach((user) => { %><option value="<%= user.id %>" <%= card.ownerUserId === user.id ? 'selected' : '' %>><%= user.username %> · <%= user.role === 'admin' ? '管理员' : '普通用户' %></option><% }) %></select></label>
+          <label class="field"><span>状态</span><select name="status"><option value="active" <%= card.status === 'active' ? 'selected' : '' %>>可支付</option><option value="declined" <%= card.status === 'declined' ? 'selected' : '' %>>模拟拒付</option><option value="frozen" <%= card.status === 'frozen' ? 'selected' : '' %>>冻结</option></select></label>
+        </div>
+        <div class="form-row">
+          <label class="field"><span>余额</span><input type="number" name="balance" min="0" step="0.01" value="<%= formatMinor(card.balanceMinor) %>" required></label>
+          <label class="field"><span>拒付原因</span><input name="decline_reason" value="<%= card.declineReason || '风控拒绝' %>"></label>
+        </div>
+        <div class="form-row">
+          <label class="field"><span>有效期月份</span><input type="number" name="expires_month" min="1" max="12" value="<%= card.expiresMonth %>" required></label>
+          <label class="field"><span>有效期年份</span><input type="number" name="expires_year" min="2020" max="2099" value="<%= card.expiresYear %>" required></label>
+        </div>
+        <div class="form-row">
+          <label class="field"><span>3DS 密码</span><input type="text" name="pin" minlength="4" maxlength="64" value="<%= card.pin %>" required></label>
+          <label class="field"><span>CVV</span><input type="text" name="cvv" pattern="\d{3,4}" value="<%= card.cvv %>" required></label>
+        </div>
+        <div class="form-actions"><button class="button button-primary" type="submit">保存卡片设置</button></div>
+      </form>
+      <hr class="divider">
+      <div class="panel-head compact-head"><div><p class="eyebrow">MANUAL DEBIT</p><h2>手工消费</h2></div></div>
+      <form method="post" action="/admin/cards/<%= card.id %>/consume" class="form-row">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <label class="field"><span>消费金额</span><input type="number" name="amount" min="0.01" step="0.01" required></label>
+        <label class="field"><span>说明</span><input name="note" value="管理员手工消费" maxlength="120"></label>
+        <div class="form-actions"><button class="button button-danger" type="submit">扣减余额</button></div>
+      </form>
+    <% } else { %>
+      <div class="alert alert-info">普通用户仅可创建自己的虚拟卡并用于支付。余额、状态、3DS 密码和 CVV 只能由管理员修改。</div>
+      <dl class="meta-list">
+        <div><dt>当前余额</dt><dd><strong><%= card.currency %> <%= formatMinor(card.balanceMinor) %></strong></dd></div>
+        <div><dt>卡片状态</dt><dd><%= statusLabel(card.status) %></dd></div>
+        <div><dt>有效期</dt><dd><%= String(card.expiresMonth).padStart(2, '0') %>/<%= card.expiresYear %></dd></div>
+      </dl>
+    <% } %>
     <dl class="meta-list">
+      <div><dt>所属用户</dt><dd><%= card.ownerUsername || '未分配' %></dd></div>
       <div><dt>卡 BIN</dt><dd><%= card.binName %> · <code><%= card.binPrefix %></code></dd></div>
       <div><dt>创建时间</dt><dd><%= formatDateTime(card.createdAt) %></dd></div>
       <div><dt>最后使用</dt><dd><%= card.lastUsedAt ? formatDateTime(card.lastUsedAt) : '尚未使用' %></dd></div>
