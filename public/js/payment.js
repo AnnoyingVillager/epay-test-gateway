@@ -12,9 +12,16 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
       submitting = true;
-      payForm.querySelectorAll('button[type="submit"]').forEach((button) => { button.disabled = true; });
+      payButton.classList.add('is-submitting');
       payButton.textContent = '正在处理支付...';
       payButton.setAttribute('aria-busy', 'true');
+      setTimeout(() => {
+        if (!submitting) return;
+        submitting = false;
+        payButton.classList.remove('is-submitting');
+        payButton.removeAttribute('aria-busy');
+        payButton.textContent = '重新尝试支付';
+      }, 20000);
     });
   }
 

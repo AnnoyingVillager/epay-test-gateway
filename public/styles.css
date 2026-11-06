@@ -48,7 +48,7 @@ small { color: var(--ink-faint); }
 
 .button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid transparent; border-radius: 10px; padding: 0.72rem 1.05rem; font-weight: 700; font-size: 0.88rem; line-height: 1; transition: transform .16s ease, box-shadow .16s ease, background .16s ease, border-color .16s ease; white-space: nowrap; }
 .button:hover { transform: translateY(-1px); }
-.button:disabled { cursor: not-allowed; opacity: 0.45; transform: none; }
+.button:disabled, .button.is-submitting { cursor: wait; opacity: 0.45; transform: none; pointer-events: none; box-shadow: none; }
 .button-primary { background: var(--teal); color: #fff; box-shadow: 0 8px 20px rgba(22, 160, 133, 0.22); }
 .button-primary:hover { background: var(--teal-dark); }
 .button-dark { background: var(--navy); color: #fff; }
