@@ -159,4 +159,3 @@ function router({ db, config, notification }) {
 }
 
 module.exports = { router };
-

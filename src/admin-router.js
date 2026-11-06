@@ -436,4 +436,3 @@ function router({ db, config, notification, logger }) {
 }
 
 module.exports = router;
-

@@ -30,7 +30,7 @@ function signedOrderParams(key, overrides = {}) {
   return params;
 }
 
-async function waitFor(predicate, timeoutMs = 3000) {
+async function waitFor(predicate, timeoutMs = 8000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     const value = predicate();

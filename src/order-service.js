@@ -272,5 +272,3 @@ module.exports = {
   simulateChargeback,
   renderOrderContext
 };
-
-
