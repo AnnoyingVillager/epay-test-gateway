@@ -20,7 +20,7 @@
 ## 已发布镜像
 
 - `ghcr.io/annoyingvillager/epay-test-gateway:latest`
-- `ghcr.io/annoyingvillager/epay-test-gateway:v1.0.0`（版本标签发布后可用）
+- `ghcr.io/annoyingvillager/epay-test-gateway:1.0.0` 和 `:1.0`（对应 Git 标签 `v1.0.0`）
 - 同时提供 `linux/amd64` 与 `linux/arm64` 多架构镜像
 
 ## 一键启动
