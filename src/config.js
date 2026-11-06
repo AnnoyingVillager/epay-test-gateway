@@ -26,7 +26,7 @@ function loadConfig(overrides = {}) {
     nodeEnv,
     isProduction: nodeEnv === 'production',
     host: process.env.HOST || '0.0.0.0',
-    port: envInt('PORT', 3000, 1, 65535),
+    port: envInt('PORT', 3001, 1, 65535),
     databasePath: process.env.DB_PATH || path.join(rootDir, 'data', 'epay.db'),
     appSecret,
     appSecretGenerated: !process.env.APP_SECRET && nodeEnv === 'production',

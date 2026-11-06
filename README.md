@@ -20,68 +20,84 @@
 ## 已发布镜像
 
 - `ghcr.io/annoyingvillager/epay-test-gateway:latest`
-- `ghcr.io/annoyingvillager/epay-test-gateway:1.0.0` 和 `:1.0`（对应 Git 标签 `v1.0.0`）
+- `ghcr.io/annoyingvillager/epay-test-gateway:1.0.1` 和 `:1.0`（对应 Git 标签 `v1.0.1`）
 - 同时提供 `linux/amd64` 与 `linux/arm64` 多架构镜像
 
-## 一键启动
+## 无需克隆源码部署
 
-### Docker Compose（直接使用已发布镜像，推荐）
+只需要下载一个 `docker-compose.yml`。所有部署参数都在该文件内，无需准备 `.env`，也无需 clone 源码。
 
-```bash
-cp .env.example .env
-# 修改 .env 中的 ADMIN_PASSWORD、APP_SECRET、DEFAULT_MERCHANT_KEY
-docker compose -f docker-compose.ghcr.yml up -d
-```
-
-Windows PowerShell：
+### Windows PowerShell
 
 ```powershell
-Copy-Item .env.example .env
-notepad .env
-docker compose -f docker-compose.ghcr.yml up -d
+Invoke-WebRequest -UseBasicParsing `
+  -Uri "https://raw.githubusercontent.com/AnnoyingVillager/epay-test-gateway/main/docker-compose.yml" `
+  -OutFile "docker-compose.yml"
+
+notepad .\docker-compose.yml
+docker compose up -d
 ```
 
-该方式会自动拉取 GHCR 镜像，不要求本机具备源码构建环境。
-
-### Docker Compose（从源码构建）
+### Linux / macOS
 
 ```bash
-cp .env.example .env
-# 修改 .env 中的 ADMIN_PASSWORD、APP_SECRET、DEFAULT_MERCHANT_KEY
-docker compose up -d --build
+curl -fsSL \
+  https://raw.githubusercontent.com/AnnoyingVillager/epay-test-gateway/main/docker-compose.yml \
+  -o docker-compose.yml
+
+nano docker-compose.yml
+docker compose up -d
 ```
 
-Windows PowerShell：
+启动前至少修改 `docker-compose.yml` 中的：
 
-```powershell
-Copy-Item .env.example .env
-notepad .env
-docker compose up -d --build
-```
+- `ADMIN_PASSWORD`：管理员密码
+- `APP_SECRET`：64 位随机十六进制字符串
+- `DEFAULT_MERCHANT_KEY`：默认商户 MD5 密钥
+- `BASE_URL`：对外访问地址；同机通过 IP 访问时可留空
 
-打开：
+默认端口为 `3001`。如果要换宿主机端口，只修改 `ports` 中冒号左侧的值，例如 `8080:3001`。
 
-- 管理面板：<http://localhost:3000/admin>
-- 健康检查：<http://localhost:3000/healthz>
+访问地址：
 
-默认管理员账号来自 `ADMIN_USERNAME`，默认值为 `admin`。第一次启动前请把 `ADMIN_PASSWORD` 改成强密码。
+- 管理面板：<http://localhost:3001/admin>
+- 健康检查：<http://localhost:3001/healthz>
 
-停止服务（使用已发布镜像时）：
+管理员默认账号为 `admin`，密码来自 `ADMIN_PASSWORD`。
+
+生成 `APP_SECRET`：
 
 ```bash
-docker compose -f docker-compose.ghcr.yml down
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-停止服务（从源码构建时）：
+停止服务：
 
 ```bash
 docker compose down
 ```
 
-两种方式都会保留数据卷。删除数据卷会清空所有虚拟卡和订单：
+保留数据卷的停止方式就是上面的默认方式。删除数据卷会清空所有虚拟卡和订单：
 
 ```bash
-docker compose -f docker-compose.ghcr.yml down -v
+docker compose down -v
+```
+
+更新到最新 GHCR 镜像：
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+### 从源码构建
+
+开发或修改源码时，使用独立的构建文件：
+
+```bash
+cp .env.example .env
+# 修改 .env 中的 ADMIN_PASSWORD、APP_SECRET、DEFAULT_MERCHANT_KEY
+docker compose -f docker-compose.build.yml up -d --build
 ```
 
 ### Docker CLI
@@ -91,24 +107,13 @@ docker pull ghcr.io/annoyingvillager/epay-test-gateway:latest
 docker run -d \
   --name epay-test-gateway \
   --restart unless-stopped \
-  -p 3000:3000 \
+  -p 3001:3001 \
+  -e PORT='3001' \
   -e ADMIN_PASSWORD='replace-me' \
   -e APP_SECRET='replace-with-random-secret' \
   -e DEFAULT_MERCHANT_KEY='replace-with-random-merchant-key' \
   -v epay_data:/app/data \
   ghcr.io/annoyingvillager/epay-test-gateway:latest
-```
-
-如需从源码构建，可改为：
-
-```bash
-docker build -t epay-test-gateway:local .
-```
-
-生成随机密钥：
-
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
 ## 首次配置
@@ -157,9 +162,9 @@ GET /api.php?act=order&pid=1001&type=alipay
   "msg": "success",
   "trade_no": "T20261106120000A1B2C3D4E5",
   "out_trade_no": "ORDER-001",
-  "payurl": "http://localhost:3000/pay/T20261106120000A1B2C3D4E5",
-  "urlscheme": "http://localhost:3000/pay/T20261106120000A1B2C3D4E5",
-  "qrcode": "http://localhost:3000/pay/T20261106120000A1B2C3D4E5",
+  "payurl": "http://localhost:3001/pay/T20261106120000A1B2C3D4E5",
+  "urlscheme": "http://localhost:3001/pay/T20261106120000A1B2C3D4E5",
+  "qrcode": "http://localhost:3001/pay/T20261106120000A1B2C3D4E5",
   "money": "10.00",
   "status": "pending"
 }
@@ -215,7 +220,7 @@ function makeSign(params, key) {
 仓库内提供了完整测试脚本：
 
 ```bash
-BASE_URL=http://localhost:3000 \
+BASE_URL=http://localhost:3001 \
 MERCHANT_PID=1001 \
 MERCHANT_KEY=test-merchant-key-change-me \
 BIND_CARD=CARD-XXXXXXXXXX \
@@ -287,8 +292,8 @@ errcode=CHARGEBACK
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `PORT` | `3000` | 容器内监听端口 |
-| `APP_PORT` | `3000` | Docker Compose 映射到宿主机的端口 |
+| `PORT` | `3001` | 容器内监听端口 |
+| `APP_PORT` | `3001` | Docker Compose 映射到宿主机的端口 |
 | `BASE_URL` | 空 | 对外公开地址；为空时根据请求自动识别 |
 | `DB_PATH` | `/app/data/epay.db` | SQLite 数据库文件 |
 | `ADMIN_USERNAME` | `admin` | 管理员账号 |
@@ -334,7 +339,7 @@ npm test
 
 ## 发布到 GitHub 与 Docker 镜像
 
-仓库已包含 `.github/workflows/docker.yml`。推送 `main` 分支会构建并推送 `ghcr.io/<owner>/<repo>:latest`；推送 `v1.0.0` 这类标签会额外生成版本标签。
+仓库已包含 `.github/workflows/docker.yml`。推送 `main` 分支会构建并推送 `ghcr.io/<owner>/<repo>:latest`；推送 `v1.0.1` 这类标签会额外生成版本标签。
 
 ```bash
 git init -b main
@@ -342,8 +347,8 @@ git add .
 git commit -m "feat: add Epay test gateway"
 gh auth login
 gh repo create epay-test-gateway --public --source=. --remote=origin --push
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0.1
+git push origin v1.0.1
 ```
 
 首次使用 GHCR 时，Actions 使用仓库的 `GITHUB_TOKEN` 推送。部署机器拉取公开镜像：

@@ -1,6 +1,6 @@
 const { makeSign } = require('../src/epay');
 
-const baseUrl = (process.env.BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+const baseUrl = (process.env.BASE_URL || 'http://localhost:3001').replace(/\/$/, '');
 const pid = process.env.MERCHANT_PID || '1001';
 const key = process.env.MERCHANT_KEY || 'test-merchant-key-change-me';
 const bindCard = process.env.BIND_CARD;

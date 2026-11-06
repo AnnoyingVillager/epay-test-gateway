@@ -55,9 +55,9 @@ sign = md5(message + merchant_key)
   "msg": "success",
   "trade_no": "T20261106120000A1B2C3D4E5",
   "out_trade_no": "ORDER-001",
-  "payurl": "http://localhost:3000/pay/T20261106120000A1B2C3D4E5",
-  "urlscheme": "http://localhost:3000/pay/T20261106120000A1B2C3D4E5",
-  "qrcode": "http://localhost:3000/pay/T20261106120000A1B2C3D4E5",
+  "payurl": "http://localhost:3001/pay/T20261106120000A1B2C3D4E5",
+  "urlscheme": "http://localhost:3001/pay/T20261106120000A1B2C3D4E5",
+  "qrcode": "http://localhost:3001/pay/T20261106120000A1B2C3D4E5",
   "money": "10.00",
   "status": "pending"
 }

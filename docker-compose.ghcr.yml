@@ -1,3 +1,5 @@
+# 兼容旧文档的 .env 参数化 Compose 文件。
+# 推荐直接使用根目录 docker-compose.yml 单文件部署。
 services:
   epay:
     image: ghcr.io/annoyingvillager/epay-test-gateway:${EPAY_TAG:-latest}
@@ -5,11 +7,11 @@ services:
     init: true
     restart: unless-stopped
     ports:
-      - "${APP_PORT:-3000}:3000"
+      - "${APP_PORT:-3001}:3001"
     environment:
       NODE_ENV: production
       HOST: 0.0.0.0
-      PORT: 3000
+      PORT: 3001
       DB_PATH: /app/data/epay.db
       BASE_URL: ${BASE_URL:-}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
