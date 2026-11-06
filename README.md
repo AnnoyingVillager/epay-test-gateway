@@ -22,7 +22,7 @@
 ## 已发布镜像
 
 - `ghcr.io/annoyingvillager/epay-test-gateway:latest`
-- `ghcr.io/annoyingvillager/epay-test-gateway:1.1.0` 和 `:1.1`（对应 Git 标签 `v1.1.0`）
+- `ghcr.io/annoyingvillager/epay-test-gateway:1.1.1` 和 `:1.1`（对应 Git 标签 `v1.1.1`）
 - 同时提供 `linux/amd64` 与 `linux/arm64` 多架构镜像
 
 ## 无需克隆源码部署
@@ -371,7 +371,7 @@ npm test
 
 ## 发布到 GitHub 与 Docker 镜像
 
-仓库已包含 `.github/workflows/docker.yml`。推送 `main` 分支会构建并推送 `ghcr.io/<owner>/<repo>:latest`；推送 `v1.1.0` 这类标签会额外生成版本标签。
+仓库已包含 `.github/workflows/docker.yml`。推送 `main` 分支会构建并推送 `ghcr.io/<owner>/<repo>:latest`；推送 `v1.1.1` 这类标签会额外生成版本标签。
 
 ```bash
 git init -b main
@@ -379,8 +379,8 @@ git add .
 git commit -m "feat: add Epay test gateway"
 gh auth login
 gh repo create epay-test-gateway --public --source=. --remote=origin --push
-git tag v1.1.0
-git push origin v1.1.0
+git tag v1.1.1
+git push origin v1.1.1
 ```
 
 首次使用 GHCR 时，Actions 使用仓库的 `GITHUB_TOKEN` 推送。部署机器拉取公开镜像：
