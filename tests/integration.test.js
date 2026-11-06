@@ -147,6 +147,14 @@ test('admin, Epay API, payment, callbacks, failures and chargeback work end to e
   response = await request(appBundle.app).post(`/pay/${tradeNo}/confirm`).type('form').send({ pin: 'wrong-pin' });
   assert.equal(response.status, 401);
   assert.match(response.text, /3DS 密码错误/);
+  response = await request(appBundle.app).post(`/pay/${tradeNo}/confirm`)
+    .set('X-Payment-Ajax', '1')
+    .set('Accept', 'application/json')
+    .type('form')
+    .send({ pin: 'wrong-pin' });
+  assert.equal(response.status, 401);
+  assert.equal(response.body.ok, false);
+  assert.equal(response.body.error.code, 'WRONG_PIN');
 
   response = await request(appBundle.app).post(`/pay/${tradeNo}/confirm`).type('form').send({ pin: '246810' });
   assert.equal(response.status, 303);
@@ -472,9 +480,15 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   assert.equal(response.status, 200);
   assert.match(response.text, /3DS 验证已关闭/);
   assert.doesNotMatch(response.text, /name="pin"/);
-  response = await request(appBundle.app).post(`/pay/${no3dsTradeNo}/confirm`).type('form').send({});
-  assert.equal(response.status, 303);
-  assert.match(response.headers.location, /trade_status=TRADE_SUCCESS/);
+  response = await request(appBundle.app).post(`/pay/${no3dsTradeNo}/confirm`)
+    .set('X-Payment-Ajax', '1')
+    .set('Accept', 'application/json')
+    .type('form')
+    .send({});
+  assert.equal(response.status, 200);
+  assert.equal(response.body.ok, true);
+  assert.equal(response.body.status, 'PAID');
+  assert.match(response.body.redirectUrl, /trade_status=TRADE_SUCCESS/);
   const no3dsOrder = appBundle.db.prepare('SELECT id, status FROM orders WHERE trade_no = ?').get(no3dsTradeNo);
   assert.equal(no3dsOrder.status, 'PAID');
   assert.equal(appBundle.db.prepare('SELECT balance_minor FROM cards WHERE id = ?').get(cardId).balance_minor, 7666);

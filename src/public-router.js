@@ -261,6 +261,9 @@ function router({ db, config, notification }) {
       order = result.order;
       const merchant = orderMerchant(order);
       if (result.wrongPin) {
+        if (req.get('x-payment-ajax') === '1') {
+          return res.status(401).json({ ok: false, status: order.status, error: { code: 'WRONG_PIN', message: result.message } });
+        }
         const card = cardById(db, config.appSecret, order.cardId, false);
         return res.status(401).render('payment', {
           title: '安全支付',
@@ -275,6 +278,9 @@ function router({ db, config, notification }) {
       const params = notification.publicReturnParams(order, merchant);
       const target = new URL(order.returnUrl);
       for (const [key, value] of Object.entries(params)) target.searchParams.set(key, value);
+      if (req.get('x-payment-ajax') === '1') {
+        return res.json({ ok: true, status: order.status, redirectUrl: target.toString() });
+      }
       return res.redirect(303, target.toString());
     } catch (error) {
       if (error instanceof EpayError && error.terminal) {
@@ -285,6 +291,14 @@ function router({ db, config, notification }) {
           const params = notification.publicReturnParams(order, merchant);
           const target = new URL(order.returnUrl);
           for (const [key, value] of Object.entries(params)) target.searchParams.set(key, value);
+          if (req.get('x-payment-ajax') === '1') {
+            return res.status(error.statusCode || 409).json({
+              ok: false,
+              status: order.status,
+              error: { code: error.code, message: error.message },
+              redirectUrl: target.toString()
+            });
+          }
           return res.redirect(303, target.toString());
         }
       }

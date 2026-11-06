@@ -5,23 +5,83 @@ document.addEventListener('DOMContentLoaded', () => {
   const payForm = document.querySelector('.pay-form');
   let submitting = false;
 
+  function showPaymentError(message) {
+    if (!payForm) return;
+    let alert = payForm.querySelector('[data-payment-error]');
+    if (!alert) {
+      alert = document.createElement('div');
+      alert.className = 'alert alert-danger';
+      alert.setAttribute('role', 'alert');
+      alert.setAttribute('data-payment-error', '');
+      payForm.prepend(alert);
+    }
+    alert.textContent = message;
+  }
+
+  function resetPayButton() {
+    submitting = false;
+    if (!payButton) return;
+    payButton.disabled = false;
+    payButton.classList.remove('is-submitting');
+    payButton.removeAttribute('aria-busy');
+    payButton.textContent = `确认支付 ${payButton.dataset.currency || ''} ${payButton.dataset.amount || ''}`.trim();
+  }
+
+  function showCompletion(title, message) {
+    if (!payForm) return;
+    payForm.hidden = true;
+    const state = document.createElement('div');
+    state.className = 'payment-state payment-state-paid';
+    const heading = document.createElement('strong');
+    heading.textContent = title;
+    const detail = document.createElement('p');
+    detail.textContent = message;
+    state.append(heading, detail);
+    payForm.parentElement.append(state);
+  }
+
   if (payForm && payButton) {
-    payForm.addEventListener('submit', (event) => {
-      if (submitting) {
-        event.preventDefault();
-        return;
-      }
+    payButton.dataset.currency = payButton.dataset.currency || '';
+    payButton.dataset.amount = payButton.dataset.amount || '';
+    payForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (submitting) return;
       submitting = true;
+      payButton.disabled = true;
       payButton.classList.add('is-submitting');
       payButton.textContent = '正在处理支付...';
       payButton.setAttribute('aria-busy', 'true');
-      setTimeout(() => {
-        if (!submitting) return;
-        submitting = false;
-        payButton.classList.remove('is-submitting');
-        payButton.removeAttribute('aria-busy');
-        payButton.textContent = '重新尝试支付';
-      }, 20000);
+
+      try {
+        const response = await fetch(payForm.action, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+            'X-Payment-Ajax': '1'
+          },
+          body: new URLSearchParams(new FormData(payForm))
+        });
+        const data = await response.json();
+
+        if (data.ok) {
+          showCompletion('订单已完成', '支付成功，正在自动返回商户网站...');
+          if (data.redirectUrl) setTimeout(() => window.location.assign(data.redirectUrl), 1400);
+          return;
+        }
+
+        if (data.redirectUrl) {
+          showCompletion('支付未完成', '正在按 Epay 标准返回商户网站...');
+          setTimeout(() => window.location.assign(data.redirectUrl), 1400);
+          return;
+        }
+
+        showPaymentError(data.error?.message || '支付失败，请重试。');
+        resetPayButton();
+      } catch {
+        showPaymentError('网络异常，支付请求未完成，请重试。');
+        resetPayButton();
+      }
     });
   }
 

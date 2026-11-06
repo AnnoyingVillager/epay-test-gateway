@@ -63,7 +63,7 @@
             <div class="step-label"><span>2</span> 确认支付</div>
             <div class="alert alert-info">3DS 验证已关闭，无需输入 3DS 密码。</div>
           <% } %>
-          <button class="button button-primary button-pay" type="submit" <%= order.canPay && card ? '' : 'disabled' %> data-pay-button>
+          <button class="button button-primary button-pay" type="submit" <%= order.canPay && card ? '' : 'disabled' %> data-pay-button data-currency="<%= order.currency %>" data-amount="<%= order.money %>">
             确认支付 <%= order.currency %> <%= order.money %>
           </button>
           <p class="secure-note">此页面仅允许使用订单绑定的虚拟卡。不会产生真实资金交易。</p>
