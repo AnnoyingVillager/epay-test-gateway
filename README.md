@@ -8,9 +8,11 @@
 
 - 兼容常见 Epay 风格的 `/submit.php`、`/api.php`、`/mapi.php` 与 MD5 签名流程
 - 用户管理：区分管理员与普通用户；普通用户仅能创建、查看自己的卡片并消费
+- 普通用户创建的虚拟卡初始余额固定为 0，且不能自行修改余额
 - 管理面板：仪表盘、虚拟卡、卡 BIN、订单、用户、商户、系统设置
 - 创建符合 Luhn 校验的虚拟卡号，支持自定义 BIN 前缀、品牌、卡号长度
 - 管理员可修改虚拟卡余额、有效期、CVV、3DS 密码、状态，并记录手工消费
+- 管理员可删除余额为 0 且无进行中订单的虚拟卡；仅当 BIN 内没有卡片时可删除 BIN
 - 一键“模拟拒付”，并可模拟已支付订单的拒付/退单
 - 订单绑卡：已绑定订单只接受指定虚拟卡；未绑定订单可登录选卡，或通过卡号、有效期和 CVV 绑卡
 - 3DS 验证可在后台开关；关闭后支付确认无需输入 3DS 密码
@@ -25,7 +27,7 @@
 ## 已发布镜像
 
 - `ghcr.io/annoyingvillager/epay-test-gateway:latest`
-- `ghcr.io/annoyingvillager/epay-test-gateway:1.2.3` 和 `:1.2`（对应 Git 标签 `v1.2.3`）
+- `ghcr.io/annoyingvillager/epay-test-gateway:1.2.4` 和 `:1.2`（对应 Git 标签 `v1.2.4`）
 - 同时提供 `linux/amd64` 与 `linux/arm64` 多架构镜像
 
 ## 无需克隆源码部署
@@ -126,7 +128,7 @@ docker run -d \
 1. 使用 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 登录管理面板。
 2. 打开 **卡 BIN**，创建例如 `424242`、长度 16 的测试 BIN。
 3. 打开 **用户**，创建普通用户账号，或让管理员直接创建卡片并指定所属用户。
-4. 普通用户登录后打开 **虚拟卡 → 创建虚拟卡**，设置初始余额和 3DS 密码。
+4. 普通用户登录后打开 **虚拟卡 → 创建虚拟卡**；初始余额固定为 0，并设置 3DS 密码。
 5. 用 `/api.php` 或 `/submit.php` 发起订单。
 6. 如果传入 `bind_card=CARD-...`，支付页直接显示指定卡片。
 7. 如果未传 `bind_card`，支付页会提示登录后选卡，或输入卡号、有效期和 CVV 绑卡。
@@ -138,9 +140,11 @@ docker run -d \
 | 功能 | 管理员 | 普通用户 |
 | --- | --- | --- |
 | 创建卡 BIN | 是 | 否 |
-| 创建虚拟卡 | 是，可指定所属用户 | 是，只能创建到自己的账号 |
+| 创建虚拟卡 | 是，可指定所属用户和初始余额 | 是，只能创建到自己的账号且初始余额固定为 0 |
 | 查看虚拟卡 | 全部 | 仅自己的卡片 |
 | 修改余额、3DS、CVV、状态 | 是 | 否 |
+| 删除虚拟卡 | 是，仅余额为 0 且无进行中订单 | 否 |
+| 删除卡 BIN | 是，仅限无卡 BIN | 否 |
 | 手工消费 | 是 | 否 |
 | 绑卡支付消费 | 是 | 是，只能选择自己的卡片 |
 | 查看订单 | 全部 | 仅自己卡片关联的订单 |
@@ -317,8 +321,8 @@ errcode=CHARGEBACK
 ## 管理面板概览
 
 - **仪表盘**：卡片余额、成功交易额、待支付/失败订单
-- **虚拟卡**：完整测试卡号、CVV、3DS 密码、余额、状态、所属用户、卡片流水
-- **卡 BIN**：仅管理员可创建和维护 BIN 前缀、品牌、卡类型、国家、卡号长度
+- **虚拟卡**：完整测试卡号、CVV、3DS 密码、余额、状态、所属用户、卡片流水；余额为 0 且无进行中订单时可删除
+- **卡 BIN**：仅管理员可创建、维护和删除无卡 BIN，包括 BIN 前缀、品牌、卡类型、国家、卡号长度
 - **订单**：管理员查看全部订单，普通用户仅查看自己卡片关联的订单
 - **用户**：创建管理员/普通用户、启停、重置密码、调整角色
 - **商户**：PID、MD5 密钥、启停、密钥轮换
@@ -375,7 +379,7 @@ npm test
 
 ## 发布到 GitHub 与 Docker 镜像
 
-仓库已包含 `.github/workflows/docker.yml`。推送 `main` 分支会构建并推送 `ghcr.io/<owner>/<repo>:latest`；推送 `v1.2.3` 这类标签会额外生成版本标签。
+仓库已包含 `.github/workflows/docker.yml`。推送 `main` 分支会构建并推送 `ghcr.io/<owner>/<repo>:latest`；推送 `v1.2.4` 这类标签会额外生成版本标签。
 
 ```bash
 git init -b main
@@ -383,8 +387,8 @@ git add .
 git commit -m "feat: add Epay test gateway"
 gh auth login
 gh repo create epay-test-gateway --public --source=. --remote=origin --push
-git tag v1.2.3
-git push origin v1.2.3
+git tag v1.2.4
+git push origin v1.2.4
 ```
 
 首次使用 GHCR 时，Actions 使用仓库的 `GITHUB_TOKEN` 推送。部署机器拉取公开镜像：

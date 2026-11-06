@@ -19,6 +19,14 @@
           <div class="list-card-side">
             <span class="pill <%= bin.is_active ? 'pill-success' : 'pill-muted' %>"><%= bin.is_active ? '启用' : '停用' %></span>
             <span><%= bin.card_count %> 张卡</span>
+            <% if (bin.card_count === 0) { %>
+              <form method="post" action="/admin/bins/<%= bin.id %>/delete" data-confirm="确认删除该卡 BIN？">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <button class="button button-danger button-small" type="submit">删除</button>
+              </form>
+            <% } else { %>
+              <span class="form-hint">含卡不可删除</span>
+            <% } %>
           </div>
           <details class="inline-details">
             <summary>编辑 BIN</summary>

@@ -24,6 +24,10 @@
           <input type="hidden" name="reason" value="模拟拒付">
           <button class="button <%= card.status === 'declined' ? 'button-primary' : 'button-danger' %>" type="submit"><%= card.status === 'declined' ? '恢复可支付' : '模拟拒付' %></button>
         </form>
+        <form method="post" action="/admin/cards/<%= card.id %>/delete" data-confirm="确认删除该虚拟卡？仅余额为 0 且无进行中订单的卡片可以删除。">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="button button-danger" type="submit">删除虚拟卡</button>
+        </form>
       <% } %>
       <a class="button button-ghost" href="/admin/orders?q=<%= encodeURIComponent(card.id) %>">查看卡片订单</a>
     </div>

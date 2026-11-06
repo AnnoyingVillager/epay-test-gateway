@@ -237,6 +237,24 @@ function router({ db, config, notification, logger }) {
     }
   });
 
+  route.post('/bins/:id/delete', (req, res) => {
+    const id = integer(req.params.id, 1, Number.MAX_SAFE_INTEGER);
+    if (!id) return redirectMessage(res, '/admin/bins', 'error', 'BIN 不存在。');
+    const result = db.transaction(() => {
+      const bin = db.prepare('SELECT id, prefix FROM bins WHERE id = ?').get(id);
+      if (!bin) return { status: 'missing' };
+      const cardCount = db.prepare('SELECT COUNT(*) AS count FROM cards WHERE bin_id = ?').get(id).count;
+      if (cardCount > 0) return { status: 'in-use', prefix: bin.prefix, cardCount };
+      db.prepare('DELETE FROM bins WHERE id = ?').run(id);
+      return { status: 'deleted', prefix: bin.prefix };
+    })();
+    if (result.status === 'missing') return redirectMessage(res, '/admin/bins', 'error', 'BIN 不存在。');
+    if (result.status === 'in-use') {
+      return redirectMessage(res, '/admin/bins', 'error', `BIN ${result.prefix} 仍有 ${result.cardCount} 张卡，清空卡片后才能删除。`);
+    }
+    return redirectMessage(res, '/admin/bins', 'ok', `BIN ${result.prefix} 已删除。`);
+  });
+
   route.get('/cards', (req, res) => {
     const status = String(req.query.status || '');
     const search = String(req.query.q || '').trim();
@@ -294,7 +312,7 @@ function router({ db, config, notification, logger }) {
     const expiresYear = normalizeYear(req.body.expires_year);
     const cvv = String(req.body.cvv || '').trim();
     const pin = String(req.body.pin || '').trim();
-    const balanceMinor = moneyInput(req.body.balance, { allowZero: true });
+    const balanceMinor = isAdmin ? moneyInput(req.body.balance, { allowZero: true }) : 0;
     const status = isAdmin ? String(req.body.status || 'active') : 'active';
     const declineReason = isAdmin ? String(req.body.decline_reason || '').trim() : '';
     let ownerId = req.user.id;
@@ -452,6 +470,28 @@ function router({ db, config, notification, logger }) {
       if (error instanceof EpayError) return redirectMessage(res, `/admin/cards/${req.params.id}`, 'error', error.message);
       throw error;
     }
+  });
+
+  route.post('/cards/:id/delete', adminOnly, (req, res) => {
+    const result = db.transaction(() => {
+      const card = db.prepare('SELECT id, balance_minor FROM cards WHERE id = ?').get(req.params.id);
+      if (!card) return { status: 'missing' };
+      if (card.balance_minor !== 0) return { status: 'nonzero', cardId: card.id, balanceMinor: card.balance_minor };
+      const pendingOrderCount = db.prepare("SELECT COUNT(*) AS count FROM orders WHERE card_id = ? AND status = 'PENDING'").get(card.id).count;
+      if (pendingOrderCount > 0) return { status: 'in-use', cardId: card.id, pendingOrderCount };
+      db.prepare('UPDATE orders SET card_id = NULL WHERE card_id = ?').run(card.id);
+      db.prepare('DELETE FROM card_transactions WHERE card_id = ?').run(card.id);
+      db.prepare('DELETE FROM cards WHERE id = ?').run(card.id);
+      return { status: 'deleted', cardId: card.id };
+    })();
+    if (result.status === 'missing') return redirectMessage(res, '/admin/cards', 'error', '虚拟卡不存在。');
+    if (result.status === 'nonzero') {
+      return redirectMessage(res, `/admin/cards/${result.cardId}`, 'error', `卡片余额必须为 0 才能删除，当前余额为 ${formatMinor(result.balanceMinor)}。`);
+    }
+    if (result.status === 'in-use') {
+      return redirectMessage(res, `/admin/cards/${result.cardId}`, 'error', `该卡仍有 ${result.pendingOrderCount} 个进行中的订单，不能删除。`);
+    }
+    return redirectMessage(res, '/admin/cards', 'ok', `虚拟卡 ${result.cardId} 已删除。`);
   });
 
   route.get('/orders', (req, res) => {

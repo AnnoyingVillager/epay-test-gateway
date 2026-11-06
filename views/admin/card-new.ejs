@@ -16,7 +16,12 @@
     <% if (isAdmin) { %>
       <label class="field field-span-2"><span>所属用户</span><select name="owner_user_id"><% users.forEach((user) => { %><option value="<%= user.id %>" <%= String(form.owner_user_id || currentUser.id) === String(user.id) ? 'selected' : '' %>><%= user.username %> · <%= user.role === 'admin' ? '管理员' : '普通用户' %></option><% }) %></select></label>
     <% } %>
-    <label class="field"><span>初始余额</span><input type="number" name="balance" min="0" step="0.01" value="<%= form.balance || '1000.00' %>" required></label>
+    <% if (isAdmin) { %>
+      <label class="field"><span>初始余额</span><input type="number" name="balance" min="0" step="0.01" value="<%= form.balance || '1000.00' %>" required></label>
+    <% } else { %>
+      <label class="field"><span>初始余额</span><input value="0.00" disabled><small>普通用户创建的卡片初始余额固定为 0，如需充值请联系管理员。</small></label>
+      <input type="hidden" name="balance" value="0">
+    <% } %>
     <label class="field"><span>货币</span><input value="由系统设置决定" disabled></label>
     <label class="field"><span>有效期月份</span><input type="number" name="expires_month" min="1" max="12" value="<%= form.expires_month || 12 %>" required></label>
     <label class="field"><span>有效期年份</span><input type="number" name="expires_year" min="<%= new Date().getFullYear() %>" max="<%= new Date().getFullYear() + 30 %>" value="<%= form.expires_year || new Date().getFullYear() + 5 %>" required></label>

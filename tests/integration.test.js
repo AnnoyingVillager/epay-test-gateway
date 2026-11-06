@@ -335,6 +335,8 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   assert.equal(response.status, 403);
 
   response = await user.get('/admin/cards/new');
+  assert.match(response.text, /初始余额固定为 0/);
+  assert.doesNotMatch(response.text, /<input type="number" name="balance"/);
   csrf = csrfFrom(response.text);
   response = await user.post('/admin/cards').type('form').send({
     _csrf: csrf,
@@ -351,6 +353,10 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   const userCreatedCard = appBundle.db.prepare('SELECT * FROM cards WHERE id = ?').get(userCreatedCardId);
   assert.equal(userCreatedCard.owner_user_id, normalUser.id);
   assert.equal(userCreatedCard.status, 'active');
+  assert.equal(userCreatedCard.balance_minor, 0);
+
+  response = await user.post(`/admin/cards/${userCreatedCardId}/delete`).type('form').send({ _csrf: userCsrf });
+  assert.equal(response.status, 403);
 
   response = await admin.get(`/admin/cards/${cardId}`);
   csrf = csrfFrom(response.text);
@@ -493,4 +499,79 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   assert.equal(no3dsOrder.status, 'PAID');
   assert.equal(appBundle.db.prepare('SELECT balance_minor FROM cards WHERE id = ?').get(cardId).balance_minor, 7666);
   await waitFor(() => appBundle.db.prepare('SELECT * FROM callback_logs WHERE order_id = ? AND success = 1').get(no3dsOrder.id));
+
+  response = await admin.get('/admin/cards/new');
+  csrf = csrfFrom(response.text);
+  response = await admin.post('/admin/cards').type('form').send({
+    _csrf: csrf,
+    owner_user_id: String(normalUser.id),
+    bin_id: String(bin.id),
+    balance: '1.00',
+    expires_month: '10',
+    expires_year: String(new Date().getFullYear() + 3),
+    cvv: '456',
+    pin: '975310',
+    status: 'active',
+    decline_reason: ''
+  });
+  assert.equal(response.status, 302);
+  const deletableCardId = decodeURIComponent(response.headers.location.split('/admin/cards/')[1].split('?')[0]);
+  response = await admin.get(`/admin/cards/${deletableCardId}`);
+  csrf = csrfFrom(response.text);
+  response = await admin.post(`/admin/cards/${deletableCardId}/delete`).type('form').send({ _csrf: csrf });
+  assert.equal(response.status, 302);
+  assert.ok(appBundle.db.prepare('SELECT id FROM cards WHERE id = ?').get(deletableCardId));
+
+  response = await admin.post(`/admin/cards/${deletableCardId}/update`).type('form').send({
+    _csrf: csrf,
+    owner_user_id: String(normalUser.id),
+    status: 'active',
+    decline_reason: '',
+    balance: '0.00',
+    expires_month: '10',
+    expires_year: String(new Date().getFullYear() + 3),
+    pin: '975310',
+    cvv: '456'
+  });
+  assert.equal(response.status, 302);
+  const pendingOrder = signedOrderParams('roles-merchant-key', {
+    notify_url: `${callbackBase}/notify`,
+    return_url: `${callbackBase}/return`,
+    out_trade_no: `DELETE-PENDING-${Date.now()}`,
+    bind_card: deletableCardId
+  });
+  response = await request(appBundle.app).get('/api.php').query(pendingOrder);
+  assert.equal(response.body.code, 1);
+  const pendingTradeNo = response.body.trade_no;
+  response = await admin.post(`/admin/cards/${deletableCardId}/delete`).type('form').send({ _csrf: csrf });
+  assert.equal(response.status, 302);
+  assert.ok(appBundle.db.prepare('SELECT id FROM cards WHERE id = ?').get(deletableCardId));
+
+  appBundle.db.prepare("UPDATE orders SET status = 'EXPIRED', closed_at = ? WHERE trade_no = ?").run(Date.now(), pendingTradeNo);
+  response = await admin.post(`/admin/cards/${deletableCardId}/delete`).type('form').send({ _csrf: csrf });
+  assert.equal(response.status, 302);
+  assert.equal(appBundle.db.prepare('SELECT id FROM cards WHERE id = ?').get(deletableCardId), undefined);
+  assert.equal(appBundle.db.prepare('SELECT COUNT(*) AS count FROM card_transactions WHERE card_id = ?').get(deletableCardId).count, 0);
+  assert.equal(appBundle.db.prepare('SELECT card_id FROM orders WHERE trade_no = ?').get(pendingTradeNo).card_id, null);
+
+  response = await admin.get('/admin/bins');
+  csrf = csrfFrom(response.text);
+  response = await admin.post(`/admin/bins/${bin.id}/delete`).type('form').send({ _csrf: csrf });
+  assert.equal(response.status, 302);
+  assert.ok(appBundle.db.prepare('SELECT id FROM bins WHERE id = ?').get(bin.id));
+
+  response = await admin.post('/admin/bins').type('form').send({
+    _csrf: csrf,
+    name: 'Deletable BIN',
+    prefix: '554400',
+    brand: 'Visa',
+    card_type: 'debit',
+    country: 'CN',
+    number_length: '16'
+  });
+  assert.equal(response.status, 302);
+  const deletableBin = appBundle.db.prepare("SELECT id FROM bins WHERE prefix = '554400'").get();
+  response = await admin.post(`/admin/bins/${deletableBin.id}/delete`).type('form').send({ _csrf: csrf });
+  assert.equal(response.status, 302);
+  assert.equal(appBundle.db.prepare('SELECT id FROM bins WHERE id = ?').get(deletableBin.id), undefined);
 });
