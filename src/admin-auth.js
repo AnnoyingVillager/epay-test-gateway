@@ -14,7 +14,7 @@ function userSessionFromRequest(req, db, config) {
   const payload = verifyUserSession(cookies[COOKIE_NAME], config.appSecret);
   if (!payload) return null;
   const user = userById(db, payload.uid);
-  if (!user || !user.isActive || user.username !== payload.u || user.role !== payload.r) return null;
+  if (!user || !user.isActive || user.accountRisk === 'blocked' || user.username !== payload.u || user.role !== payload.r) return null;
   return { payload, user, token: cookies[COOKIE_NAME] };
 }
 
@@ -78,7 +78,7 @@ function verifyCsrf(req, res, next) {
 
 function validUserCredentials(db, username, password) {
   const row = db.prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE').get(String(username));
-  if (!row || !row.is_active || !verifyPassword(password, row.password_hash)) return null;
+  if (!row || !row.is_active || row.account_risk === 'blocked' || !verifyPassword(password, row.password_hash)) return null;
   return mapUser(row);
 }
 

@@ -1,0 +1,36 @@
+<%- include('../partials/head', { bodyClass: 'admin-page' }) %>
+<%- include('../partials/admin-start') %>
+<div class="detail-grid">
+  <section class="panel">
+    <div class="panel-head"><div><p class="eyebrow">MERCHANT</p><h2><%= merchant.name %></h2></div><% if (merchant.isDefault) { %><span class="pill pill-success">默认商户</span><% } %></div>
+    <dl class="meta-list"><div><dt>PID</dt><dd><code><%= merchant.pid %></code></dd></div><div><dt>余额</dt><dd><strong>CNY <%= formatMinor(merchant.balanceMinor) %></strong></dd></div><div><dt>佣金比例</dt><dd><%= merchant.commissionBps %> bps</dd></div><div><dt>状态</dt><dd><%= merchant.isActive ? '启用' : '停用' %></dd></div></dl>
+    <form method="post" action="/admin/merchants/<%= merchant.id %>/balance" class="form-row">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label class="field"><span>操作</span><select name="operation"><option value="add">增加</option><option value="subtract">减少</option><option value="set">设为</option></select></label>
+      <label class="field"><span>金额</span><input type="number" name="amount" min="0.01" step="0.01" required></label>
+      <div class="form-actions"><button class="button button-primary" type="submit">调整商户余额</button></div>
+    </form>
+  </section>
+  <section class="panel">
+    <div class="panel-head"><div><p class="eyebrow">SETTLEMENT</p><h2>结算规则</h2></div></div>
+    <div class="alert alert-info">借记卡支付成功后立即结算并扣除佣金。信用卡与账户余额支付在担保期内暂缓结算，担保期内可退款；超过担保时间自动进入商户余额。</div>
+    <dl class="meta-list"><div><dt>当前余额</dt><dd>CNY <%= formatMinor(merchant.balanceMinor) %></dd></div><div><dt>佣金</dt><dd><%= merchant.commissionBps %> bps</dd></div></dl>
+  </section>
+</div>
+<section class="panel">
+  <div class="panel-head"><div><p class="eyebrow">MERCHANT ORDERS</p><h2>订单与退款</h2></div><span class="count-badge"><%= orders.length %></span></div>
+  <% if (!orders.length) { %><div class="empty-state compact">暂无订单。</div><% } else { %><div class="table-wrap"><table><thead><tr><th>流水号</th><th>金额</th><th>支付方式</th><th>状态</th><th>结算</th><th>退款</th><th>时间</th></tr></thead><tbody>
+    <% orders.forEach((order) => { const refundable = order.status === 'PAID' && order.settlementMode === 'guarantee' && !order.settledAt && order.settlementDueAt > currentTime && order.refundedMinor < order.moneyMinor; %>
+      <tr><td><code><%= order.tradeNo %></code><br><small><%= order.outTradeNo %></small></td><td><%= formatMinor(order.moneyMinor) %></td><td><%= order.paymentMethod %></td><td><span class="pill pill-<%= order.status.toLowerCase() %>"><%= statusLabel(order.status) %></span></td><td><% if (order.settledAt) { %>已结算<%= order.settlementMode === 'guarantee' ? ` · 净额 ${formatMinor(order.merchantNetMinor)}` : '' %><% } else if (order.settlementMode === 'guarantee') { %>担保至 <%= formatDateTime(order.settlementDueAt) %><% } else { %>-<% } %></td><td><%= formatMinor(order.refundedMinor) %><% if (refundable) { %><form method="post" action="/admin/merchants/<%= merchant.id %>/orders/<%= order.id %>/refund" data-confirm="确认发起退款？留空金额时全额退款。"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="reason" value="商户后台退款"><input class="inline-amount" type="number" name="amount" min="0.01" step="0.01" max="<%= formatMinor(order.moneyMinor - order.refundedMinor) %>" placeholder="全额"><button class="button button-danger button-small" type="submit">退款</button></form><% } %></td><td><%= formatDateTime(order.createdAt) %></td></tr>
+    <% }) %>
+  </tbody></table></div><% } %>
+</section>
+<section class="panel">
+  <div class="panel-head"><div><p class="eyebrow">MERCHANT LEDGER</p><h2>商户余额流水</h2></div></div>
+  <% if (!transactions.length) { %><div class="empty-state compact">暂无商户流水。</div><% } else { %><div class="table-wrap"><table><thead><tr><th>时间</th><th>类型</th><th>金额</th><th>余额</th><th>说明</th></tr></thead><tbody><% transactions.forEach((tx) => { %><tr><td><%= formatDateTime(tx.created_at) %></td><td><%= tx.type %></td><td><%= formatMinor(tx.amount_minor) %></td><td><%= formatMinor(tx.balance_after_minor) %></td><td><%= tx.note || '-' %></td></tr><% }) %></tbody></table></div><% } %>
+</section>
+<section class="panel">
+  <div class="panel-head"><div><p class="eyebrow">REFUNDS</p><h2>退款记录</h2></div><span class="count-badge"><%= refunds.length %></span></div>
+  <% if (!refunds.length) { %><div class="empty-state compact">暂无退款。</div><% } else { %><div class="table-wrap"><table><thead><tr><th>退款单号</th><th>订单</th><th>金额</th><th>渠道</th><th>时间</th></tr></thead><tbody><% refunds.forEach((refund) => { %><tr><td><code><%= refund.refund_no %></code></td><td><code><%= refund.trade_no %></code></td><td><%= formatMinor(refund.amount_minor) %></td><td><%= refund.channel %></td><td><%= formatDateTime(refund.created_at) %></td></tr><% }) %></tbody></table></div><% } %>
+</section>
+<%- include('../partials/admin-end') %>

@@ -19,7 +19,7 @@
         <div><dt>网关流水</dt><dd><code><%= order.tradeNo %></code></dd></div>
         <div><dt>支付方式</dt><dd><%= order.type %></dd></div>
       </dl>
-      <div class="countdown-box <%= remainingSeconds <= 0 ? 'expired' : '' %>" data-expires="<%= order.expiresAt %>">
+      <div class="countdown-box <%= remainingSeconds <= 0 ? 'expired' : '' %>" data-expires="<%= order.expiresAt %>" data-order-status-url="/pay/<%= encodeURIComponent(order.tradeNo) %>/status" data-order-status="<%= order.status %>">
         <span>订单剩余时间</span>
         <strong data-countdown><%= Math.floor(remainingSeconds / 60) %>:<%= String(remainingSeconds % 60).padStart(2, '0') %></strong>
       </div>

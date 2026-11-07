@@ -40,6 +40,22 @@ document.addEventListener('DOMContentLoaded', () => {
     payForm.parentElement.append(state);
   }
 
+
+  document.querySelectorAll('form[data-payment-submit]').forEach((form) => {
+    form.addEventListener('submit', (event) => {
+      if (form.dataset.submitting === '1') {
+        event.preventDefault();
+        return;
+      }
+      form.dataset.submitting = '1';
+      form.querySelectorAll('button, input[type="submit"]').forEach((button) => {
+        button.disabled = true;
+        button.setAttribute('aria-busy', 'true');
+      });
+      const primary = form.querySelector('button[type="submit"]');
+      if (primary) primary.textContent = '正在处理...';
+    });
+  });
   if (payForm && payButton) {
     payButton.dataset.currency = payButton.dataset.currency || '';
     payButton.dataset.amount = payButton.dataset.amount || '';
@@ -110,4 +126,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
   render();
   timer = setInterval(render, 1000);
+
+  const statusUrl = countdownBox.getAttribute('data-order-status-url') || '';
+  const initialStatus = countdownBox.getAttribute('data-order-status') || '';
+  if (statusUrl && initialStatus === 'PENDING') {
+    let checkingStatus = false;
+    async function checkOrderStatus() {
+      if (checkingStatus || document.hidden) return;
+      checkingStatus = true;
+      try {
+        const response = await fetch(statusUrl, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+        if (!response.ok) return;
+        const data = await response.json();
+        if (data.ok && data.status && data.status !== 'PENDING') window.location.reload();
+      } catch {
+        // Polling should not interrupt a payment already being submitted.
+      } finally {
+        checkingStatus = false;
+      }
+    }
+    setInterval(checkOrderStatus, 2500);
+  }
 });

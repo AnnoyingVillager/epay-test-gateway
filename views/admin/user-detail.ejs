@@ -1,0 +1,92 @@
+<%- include('../partials/head', { bodyClass: 'admin-page' }) %>
+<%- include('../partials/admin-start') %>
+<div class="detail-grid">
+  <section class="panel">
+    <div class="panel-head"><div><p class="eyebrow">USER PROFILE</p><h2><%= user.username %></h2></div><span class="pill <%= user.isActive ? 'pill-success' : 'pill-danger' %>"><%= user.isActive ? '启用' : '禁用' %></span></div>
+    <dl class="meta-list">
+      <div><dt>UID</dt><dd><code><%= user.uid %></code></dd></div>
+      <div><dt>角色</dt><dd><%= user.role === 'admin' ? '管理员' : '普通用户' %></dd></div>
+      <div><dt>邮箱</dt><dd><%= user.email || '-' %></dd></div>
+      <div><dt>分组</dt><dd><%= user.groupName || 'Default' %></dd></div>
+      <div><dt>账户余额</dt><dd><strong>CNY <%= formatMinor(user.accountBalanceMinor) %></strong></dd></div>
+      <div><dt>生效消费限额</dt><dd><%= effectiveLimitMinor === null ? '不限制' : 'CNY ' + formatMinor(effectiveLimitMinor) %></dd></div>
+      <div><dt>累计已消费</dt><dd>CNY <%= formatMinor(spentMinor) %></dd></div>
+      <div><dt>邀请码</dt><dd><code><%= user.inviteCode %></code></dd></div>
+      <div><dt>邀请人</dt><dd><% if (topology.inviter) { %><% if (topology.inviter.deletedAt) { %><%= topology.inviter.username %> (UID <%= topology.inviter.uid %>) · 已删除<% } else { %><a class="text-link" href="/admin/users/<%= topology.inviter.uid %>"><%= topology.inviter.username %> (UID <%= topology.inviter.uid %>)</a><% } %><% } else { %>-<% } %></dd></div>
+      <div><dt>已邀请 UID</dt><dd><% if (topology.invitees.length || topology.deletedInvitees.length) { %><%= [...topology.invitees, ...topology.deletedInvitees].map((item) => item.uid).join(', ') %><% } else { %>-<% } %></dd></div>
+      <div><dt>禁用理由</dt><dd><%= user.disabledReason || '-' %></dd></div>
+      <div><dt>超级风控时间</dt><dd><%= user.superRiskAt ? formatDateTime(user.superRiskAt) : '-' %></dd></div>
+    </dl>
+  </section>
+  <section class="panel">
+    <div class="panel-head"><div><p class="eyebrow">ACCOUNT CONTROL</p><h2>账户与风控</h2></div></div>
+    <form method="post" action="/admin/users/<%= user.uid %>/update" class="stack-form">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="form-row">
+        <label class="field"><span>分组</span><select name="group_id"><% groups.forEach((group) => { %><option value="<%= group.id %>" <%= group.id === user.groupId ? 'selected' : '' %>><%= group.name %></option><% }) %></select></label>
+        <label class="field"><span>邀请上限</span><input type="number" name="invite_limit" min="0" value="<%= user.inviteLimit %>" required></label>
+      </div>
+      <div class="form-row">
+        <label class="field"><span>账号风控</span><select name="account_risk"><option value="normal" <%= user.accountRisk === 'normal' ? 'selected' : '' %>>正常</option><option value="watch" <%= user.accountRisk === 'watch' ? 'selected' : '' %>>观察</option><option value="blocked" <%= user.accountRisk === 'blocked' ? 'selected' : '' %>>阻断</option></select></label>
+        <label class="field"><span>卡片风控</span><select name="card_risk"><option value="normal" <%= user.cardRisk === 'normal' ? 'selected' : '' %>>正常</option><option value="frozen" <%= user.cardRisk === 'frozen' ? 'selected' : '' %>>冻结支付</option></select></label>
+      </div>
+      <div class="form-row">
+        <label class="field"><span>消费限额模式</span><select name="spend_limit_mode"><option value="inherit" <%= user.spendLimitMinor === null ? 'selected' : '' %>>继承分组限额</option><option value="unlimited" <%= user.spendLimitMinor === -1 ? 'selected' : '' %>>单独不限制</option><option value="custom" <%= user.spendLimitMinor !== null && user.spendLimitMinor !== -1 ? 'selected' : '' %>>自定义限额</option></select></label>
+        <label class="field"><span>自定义限额</span><input type="number" name="spend_limit" min="0" step="0.01" value="<%= user.spendLimitMinor !== null && user.spendLimitMinor !== -1 ? formatMinor(user.spendLimitMinor) : '' %>"></label>
+      </div>
+      <div class="form-row">
+        <label class="field"><span>卡面额度</span><input type="number" name="card_balance_limit" min="0" step="0.01" value="<%= user.cardBalanceLimitMinor === null ? '' : formatMinor(user.cardBalanceLimitMinor) %>"></label>
+      </div>
+      <label class="field checkbox-field"><input type="checkbox" name="card_balance_limit_unlimited" value="1" <%= user.cardBalanceLimitMinor === null ? 'checked' : '' %>><span>卡面额度不限制</span></label>
+      <div class="form-row">
+        <label class="field"><span>禁用理由</span><input name="disabled_reason" value="<%= user.disabledReason || '风险控制' %>" maxlength="200"></label>
+        <label class="field checkbox-field"><input type="checkbox" name="is_active" value="1" <%= user.isActive ? 'checked' : '' %>><span>账号启用</span></label>
+      </div>
+      <label class="field checkbox-field"><input type="checkbox" name="can_invite" value="1" <%= user.canInvite ? 'checked' : '' %>><span>允许该用户邀请其他人</span></label>
+      <div class="form-actions"><button class="button button-primary" type="submit">保存用户配置</button></div>
+    </form>
+  </section>
+</div>
+
+<div class="detail-grid">
+  <section class="panel">
+    <div class="panel-head"><div><p class="eyebrow">ACCOUNT BALANCE</p><h2>调整账户余额</h2></div></div>
+    <form method="post" action="/admin/users/<%= user.uid %>/balance" class="form-row">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label class="field"><span>操作</span><select name="operation"><option value="add">增加</option><option value="subtract">减少</option><option value="set">设为</option></select></label>
+      <label class="field"><span>金额</span><input type="number" name="amount" min="0.01" step="0.01" required></label>
+      <div class="form-actions"><button class="button button-primary" type="submit">调整余额</button></div>
+    </form>
+  </section>
+  <section class="panel">
+    <div class="panel-head"><div><p class="eyebrow">EXTREME RISK</p><h2>超级风控</h2></div></div>
+    <div class="alert alert-warning">会清空账户余额和全部卡余额、删除名下所有卡、终止进行中订单并禁用账号。</div>
+    <form method="post" action="/admin/users/<%= user.uid %>/super-risk" data-confirm="确认执行超级风控？该操作不可撤销。">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label class="field"><span>风控理由</span><input name="reason" value="极端风险控制" maxlength="200"></label>
+      <button class="button button-danger" type="submit">一键超级风控</button>
+    </form>
+    <% if (user.superRiskAt && !user.isActive && user.role !== 'admin') { %>
+      <hr class="divider">
+      <form method="post" action="/admin/users/<%= user.uid %>/delete" data-confirm="确认删除账号？删除后不可再次启用。">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="button button-danger" type="submit">删除账号并保留 UID 拓扑</button>
+      </form>
+    <% } %>
+  </section>
+</div>
+
+<section class="panel">
+  <div class="panel-head"><div><p class="eyebrow">CARDS</p><h2>名下虚拟卡</h2></div><span class="count-badge"><%= cards.length %></span></div>
+  <% if (!cards.length) { %><div class="empty-state compact">该用户暂无虚拟卡。</div><% } else { %>
+    <div class="table-wrap"><table><thead><tr><th>卡 ID</th><th>BIN</th><th>类型</th><th>余额</th><th>状态</th><th></th></tr></thead><tbody>
+      <% cards.forEach((card) => { %><tr><td><code><%= card.id %></code></td><td><%= card.binName %> · <%= card.binPrefix %></td><td><%= card.cardType %></td><td>CNY <%= formatMinor(card.balanceMinor) %></td><td><%= statusLabel(card.status) %></td><td class="align-right"><a class="button button-ghost button-small" href="/admin/cards/<%= card.id %>">管理</a></td></tr><% }) %>
+    </tbody></table></div>
+  <% } %>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><div><p class="eyebrow">ACCOUNT LEDGER</p><h2>账户流水</h2></div></div>
+  <% if (!transactions.length) { %><div class="empty-state compact">暂无账户流水。</div><% } else { %><div class="table-wrap"><table><thead><tr><th>时间</th><th>类型</th><th>金额</th><th>余额</th><th>说明</th></tr></thead><tbody><% transactions.forEach((tx) => { %><tr><td><%= formatDateTime(tx.created_at) %></td><td><%= tx.type %></td><td><%= formatMinor(tx.amount_minor) %></td><td><%= formatMinor(tx.balance_after_minor) %></td><td><%= tx.note || '-' %></td></tr><% }) %></tbody></table></div><% } %>
+</section>
+<%- include('../partials/admin-end') %>

@@ -368,3 +368,5 @@ td code { font-size: .72rem; color: #435862; }
   .message-actions { flex-direction: column; }
   .admin-topbar .brand small { display: none; }
 }
+
+.inline-amount { width: 92px; min-height: 34px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px; background: #fff; }

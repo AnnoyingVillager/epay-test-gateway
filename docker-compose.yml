@@ -1,5 +1,5 @@
-# 单文件部署：无需 clone 源码，也无需 .env。
-# 下载后直接修改下方参数，然后运行：docker compose up -d
+# 单文件部署：无需 clone 源码；需创建同目录 .env 保存本地密钥。
+# 下载后创建同目录 .env，填写密钥，然后运行：docker compose up -d
 # 管理面板：http://localhost:3001/admin
 services:
   epay:
@@ -25,13 +25,13 @@ services:
       ADMIN_PASSWORD: "change-me-now"
       ADMIN_SESSION_HOURS: "12"
 
-      # 必改：使用 64 位随机十六进制字符串，否则重启后已加密卡数据无法解密。
-      APP_SECRET: "replace-with-a-long-random-secret"
+      # 必填：64 位随机十六进制字符串。不要提交 .env；已有数据库升级时必须保留原值。
+      APP_SECRET: "${APP_SECRET:?set APP_SECRET in .env}"
 
       # 首次启动时创建默认商户；数据库已存在后请在管理面板中修改。
       DEFAULT_MERCHANT_PID: "1001"
       DEFAULT_MERCHANT_NAME: "Demo Merchant"
-      DEFAULT_MERCHANT_KEY: "replace-with-a-random-merchant-key"
+      DEFAULT_MERCHANT_KEY: "${DEFAULT_MERCHANT_KEY:?set DEFAULT_MERCHANT_KEY in .env}"
 
       # 默认订单超时与异步回调设置。
       ORDER_TIMEOUT_SECONDS: "900"

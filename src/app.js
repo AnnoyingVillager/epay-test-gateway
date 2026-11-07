@@ -4,10 +4,12 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const { openDatabase, getSetting } = require('./db');
 const { NotificationService } = require('./notifications');
-const { sweepExpiredOrders } = require('./order-service');
+const { sweepExpiredOrders, settleMaturedOrders } = require('./order-service');
 const { userSessionFromRequest } = require('./admin-auth');
 const publicRouter = require('./public-router');
 const adminRouter = require('./admin-router');
+const registrationRouter = require('./registration-router');
+const { Mailer } = require('./mailer');
 const { formatMinor } = require('./epay');
 const { version: appVersion } = require('../package.json');
 
@@ -16,6 +18,7 @@ function createApp(options) {
   const logger = options.logger || console;
   const db = options.db || openDatabase(config);
   const notification = new NotificationService({ db, config, logger });
+  const mailer = options.mailer || new Mailer({ db, config, logger });
   const app = express();
 
   app.disable('x-powered-by');
@@ -26,6 +29,7 @@ function createApp(options) {
   app.locals.assetVersion = appVersion;
   app.locals.db = db;
   app.locals.notification = notification;
+  app.locals.mailer = mailer;
   app.locals.formatMinor = formatMinor;
   app.locals.siteName = getSetting(db, 'site_name', 'Epay Test Gateway');
   app.locals.formatDateTime = (value) => {
@@ -92,13 +96,17 @@ function createApp(options) {
 
   app.use('/pay/:tradeNo/confirm', payLimiter);
   app.use('/pay/:tradeNo/bind', payLimiter);
+  app.use('/pay/:tradeNo/account', payLimiter);
   app.use('/pay/:tradeNo/login', loginLimiter);
   app.use('/admin/login', loginLimiter);
+  app.use('/register/send-code', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false }));
+  app.use('/register', rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: 'draft-8', legacyHeaders: false }));
   app.use('/admin', (req, res, next) => {
     if (req.method === 'GET') res.set('Cache-Control', 'no-store');
     next();
   });
-  app.use('/admin', adminRouter({ db, config, notification, logger }));
+  app.use('/admin', adminRouter({ db, config, notification, logger, mailer }));
+  app.use('/', registrationRouter.router({ db, config, mailer, logger }));
   app.use('/', publicRouter.router({ db, config, notification }));
 
   app.use((req, res) => {
@@ -122,8 +130,9 @@ function createApp(options) {
   const sweep = () => {
     try {
       sweepExpiredOrders({ db, notification });
+      settleMaturedOrders({ db });
     } catch (error) {
-      logger.error?.('Expired order sweep failed', error);
+      logger.error?.('Background order sweep failed', error);
     }
   };
   const sweepTimer = setInterval(sweep, config.sweepIntervalMs);
@@ -134,6 +143,7 @@ function createApp(options) {
     app,
     db,
     notification,
+    mailer,
     close() {
       clearInterval(sweepTimer);
       db.close();

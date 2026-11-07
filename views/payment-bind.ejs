@@ -19,7 +19,7 @@
         <div><dt>网关流水</dt><dd><code><%= order.tradeNo %></code></dd></div>
         <div><dt>支付方式</dt><dd><%= order.type %></dd></div>
       </dl>
-      <div class="countdown-box <%= remainingSeconds <= 0 ? 'expired' : '' %>" data-expires="<%= order.expiresAt %>">
+      <div class="countdown-box <%= remainingSeconds <= 0 ? 'expired' : '' %>" data-expires="<%= order.expiresAt %>" data-order-status-url="/pay/<%= encodeURIComponent(order.tradeNo) %>/status" data-order-status="<%= order.status %>">
         <span>订单剩余时间</span>
         <strong data-countdown><%= Math.floor(remainingSeconds / 60) %>:<%= String(remainingSeconds % 60).padStart(2, '0') %></strong>
       </div>
@@ -30,18 +30,24 @@
       <% if (error) { %><div class="alert alert-danger" role="alert"><%= error %></div><% } %>
 
       <% if (!currentUser) { %>
-        <div class="alert alert-info">该订单尚未绑定虚拟卡。你可以登录后选择自己的卡片，也可以直接输入卡号、有效期和 CVV 完成绑卡。</div>
-        <form method="post" action="/pay/<%= encodeURIComponent(order.tradeNo) %>/login" class="stack-form">
+        <div class="alert alert-info">该订单尚未绑定虚拟卡。你可以登录后使用账户余额或选择自己的卡片，也可以直接输入卡号、有效期和 CVV 完成绑卡。</div>
+        <form method="post" action="/pay/<%= encodeURIComponent(order.tradeNo) %>/login" class="stack-form" data-payment-submit>
           <div class="step-label"><span>A</span> 登录后选卡</div>
           <label class="field"><span>用户名</span><input name="username" autocomplete="username" required></label>
           <label class="field"><span>密码</span><input type="password" name="password" autocomplete="current-password" required></label>
           <button class="button button-primary button-block" type="submit">登录并选择卡片</button>
         </form>
       <% } else { %>
-        <div class="alert alert-info">当前登录：<strong><%= currentUser.username %></strong>（<%= currentUser.role === 'admin' ? '管理员' : '普通用户' %>）。普通用户只能选择自己名下的卡片。</div>
+        <div class="alert alert-info">当前登录：<strong><%= currentUser.username %></strong>（UID <%= currentUser.uid %>）。账户余额：<strong><%= order.currency %> <%= formatMinor(accountBalanceMinor) %></strong>。</div>
+        <form method="post" action="/pay/<%= encodeURIComponent(order.tradeNo) %>/account" class="stack-form" data-payment-submit>
+          <div class="step-label"><span>A</span> 使用账户余额支付</div>
+          <button class="button button-primary button-block" type="submit" <%= order.canPay && accountBalanceMinor >= order.moneyMinor ? '' : 'disabled' %>>账户余额支付 <%= order.currency %> <%= order.money %></button>
+          <p class="secure-note">登录后可直接使用账户余额支付，不再进行 3DS 或卡片验证。</p>
+        </form>
+        <hr class="divider">
         <% if (userCards.length) { %>
-          <form method="post" action="/pay/<%= encodeURIComponent(order.tradeNo) %>/bind" class="stack-form">
-            <div class="step-label"><span>A</span> 选择我的虚拟卡</div>
+          <form method="post" action="/pay/<%= encodeURIComponent(order.tradeNo) %>/bind" class="stack-form" data-payment-submit>
+            <div class="step-label"><span>B</span> 选择我的虚拟卡</div>
             <label class="field"><span>可用卡片</span>
               <select name="card_id" required>
                 <% userCards.forEach((card) => { %>
@@ -58,8 +64,8 @@
       <% } %>
 
       <hr class="divider">
-      <form method="post" action="/pay/<%= encodeURIComponent(order.tradeNo) %>/bind" class="stack-form">
-        <div class="step-label"><span>B</span> 使用银行卡信息绑卡</div>
+      <form method="post" action="/pay/<%= encodeURIComponent(order.tradeNo) %>/bind" class="stack-form" data-payment-submit>
+        <div class="step-label"><span>C</span> 使用银行卡信息绑卡</div>
         <label class="field">
           <span>卡号</span>
           <input name="card_number" inputmode="numeric" maxlength="23" placeholder="输入虚拟卡号，可包含空格" required autocomplete="cc-number">
@@ -75,7 +81,7 @@
           </label>
         </div>
         <button class="button <%= currentUser ? 'button-ghost' : 'button-primary' %> button-block" type="submit" <%= order.canPay ? '' : 'disabled' %>>验证卡片并继续</button>
-        <p class="secure-note"><% if (require3ds) { %>下一步需要输入卡片设置的 3DS 密码。<% } else { %>3DS 验证已关闭，绑定后会直接进入确认支付步骤。<% } %>绑定后订单只允许使用该虚拟卡，不会产生真实资金交易。</p>
+        <p class="secure-note">绑定后订单只允许使用该虚拟卡。是否需要 3DS 密码由卡片所属 BIN 配置决定，不会产生真实资金交易。</p>
       </form>
     </div>
   </section>

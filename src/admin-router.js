@@ -7,7 +7,7 @@ const {
   generateCardNumber,
   luhnValid,
   randomToken,
-  hashPassword
+  randomDigits
 } = require('./crypto');
 const {
   getSetting,
@@ -28,7 +28,8 @@ const {
   clearSessionCookie,
   userSessionFromRequest
 } = require('./admin-auth');
-const { simulateChargeback, EpayError } = require('./order-service');
+const { simulateChargeback, refundOrder, renderOrderContext, EpayError } = require('./order-service');
+const userAdminRouter = require('./user-admin-router');
 
 function moneyInput(value, { allowZero = true } = {}) {
   const raw = String(value ?? '').trim();
@@ -55,6 +56,10 @@ function normalizeYear(value) {
 function redirectMessage(res, path, key, message) {
   const separator = path.includes('?') ? '&' : '?';
   res.redirect(`${path}${separator}${key}=${encodeURIComponent(message)}`);
+}
+
+function numericIds(value) {
+  return [...new Set([].concat(value || []).map((item) => Number.parseInt(item, 10)).filter((item) => Number.isSafeInteger(item) && item > 0))];
 }
 
 function safeNext(value) {
@@ -85,7 +90,7 @@ function router({ db, config, notification, logger }) {
   function orderScope(req) {
     return req.user.role === 'admin'
       ? { condition: '', params: [] }
-      : { condition: 'o.card_id IN (SELECT id FROM cards WHERE owner_user_id = ?)', params: [req.user.id] };
+      : { condition: '(o.payer_user_id = ? OR o.card_id IN (SELECT id FROM cards WHERE owner_user_id = ?))', params: [req.user.id, req.user.id] };
   }
 
   function cardAccessCondition(req) {
@@ -108,7 +113,13 @@ function router({ db, config, notification, logger }) {
         COALESCE(MAX(o.closed_at), 0) AS last_closed,
         COALESCE(MAX(o.notified_at), 0) AS last_notified,
         COALESCE(MAX(o.notify_attempts), 0) AS max_notify_attempts,
-        COALESCE(SUM(CASE WHEN o.notify_state = 'SENT' THEN 1 ELSE 0 END), 0) AS sent_notifications
+        COALESCE(SUM(CASE WHEN o.notify_state = 'SENT' THEN 1 ELSE 0 END), 0) AS sent_notifications,
+        COALESCE(MAX(o.settled_at), 0) AS last_settled,
+        COALESCE(MAX(o.settlement_due_at), 0) AS last_settlement_due,
+        COALESCE(MAX(o.refunded_at), 0) AS last_refunded,
+        COALESCE(SUM(o.refunded_minor), 0) AS refunded,
+        COALESCE(SUM(o.commission_minor), 0) AS commission,
+        COALESCE(SUM(o.merchant_net_minor), 0) AS merchant_net
       FROM orders o
       ${where}
     `).get(...scope.params);
@@ -118,7 +129,7 @@ function router({ db, config, notification, logger }) {
   route.get('/login', (req, res) => {
     const next = safeNext(req.query.next);
     if (userSessionFromRequest(req, db, config)) return res.redirect(next);
-    res.render('admin/login', { title: '账户登录', error: null, next });
+    res.render('admin/login', { title: '账户登录', error: null, next, registrationEnabled: getSetting(db, 'registration_enabled', '0') === '1' });
   });
 
   route.post('/login', (req, res) => {
@@ -129,7 +140,8 @@ function router({ db, config, notification, logger }) {
       return res.status(401).render('admin/login', {
         title: '账户登录',
         error: '用户名或密码错误，或账号已被停用。',
-        next: safeNext(req.body.next)
+        next: safeNext(req.body.next),
+        registrationEnabled: getSetting(db, 'registration_enabled', '0') === '1'
       });
     }
     const session = createSession(user, config);
@@ -152,13 +164,14 @@ function router({ db, config, notification, logger }) {
   route.use('/merchants', adminOnly);
   route.use('/settings', adminOnly);
   route.use('/users', adminOnly);
+  route.use(userAdminRouter({ db, config, adminOnly }));
 
   route.get('/', (req, res) => {
     const isAdmin = req.user.role === 'admin';
     const cardWhere = isAdmin ? '' : 'WHERE owner_user_id = ?';
     const cardParams = isAdmin ? [] : [req.user.id];
-    const orderWhere = isAdmin ? '' : "WHERE card_id IN (SELECT id FROM cards WHERE owner_user_id = ?)";
-    const orderParams = isAdmin ? [] : [req.user.id];
+    const orderWhere = isAdmin ? '' : "WHERE payer_user_id = ? OR card_id IN (SELECT id FROM cards WHERE owner_user_id = ?)";
+    const orderParams = isAdmin ? [] : [req.user.id, req.user.id];
     const stats = {
       cards: db.prepare(`SELECT COUNT(*) AS count FROM cards ${cardWhere}`).get(...cardParams).count,
       activeCards: db.prepare(`SELECT COUNT(*) AS count FROM cards ${cardWhere ? `${cardWhere} AND` : 'WHERE'} status = 'active'`).get(...cardParams).count,
@@ -183,11 +196,11 @@ function router({ db, config, notification, logger }) {
 
   route.get('/bins', (req, res) => {
     const bins = db.prepare(`
-      SELECT b.*, COUNT(c.id) AS card_count
-      FROM bins b LEFT JOIN cards c ON c.bin_id = b.id
+      SELECT b.*, COUNT(DISTINCT c.id) AS card_count, GROUP_CONCAT(DISTINCT bg.group_id) AS group_ids
+      FROM bins b LEFT JOIN cards c ON c.bin_id = b.id LEFT JOIN bin_groups bg ON bg.bin_id = b.id
       GROUP BY b.id ORDER BY b.created_at DESC
     `).all();
-    res.render('admin/bins', { title: '卡 BIN 管理', bins });
+    res.render('admin/bins', { title: '卡 BIN 管理', bins, groups: db.prepare('SELECT * FROM user_groups ORDER BY id').all() });
   });
 
   route.post('/bins', (req, res) => {
@@ -197,15 +210,25 @@ function router({ db, config, notification, logger }) {
     const cardType = String(req.body.card_type || 'debit').trim();
     const country = String(req.body.country || 'CN').trim().toUpperCase();
     const numberLength = integer(req.body.number_length, 12, 19);
-    if (!name || prefix.length < 4 || prefix.length > 8 || numberLength === null || prefix.length >= numberLength) {
-      return redirectMessage(res, '/admin/bins', 'error', '请填写有效名称、4-8 位 BIN 前缀和 12-19 位卡号长度。');
+    const require3ds = req.body.require_3ds === undefined ? 1 : (req.body.require_3ds === '1' ? 1 : 0);
+    const groupSelectionProvided = req.body.group_ids_present === '1' || Object.prototype.hasOwnProperty.call(req.body, 'group_ids');
+    const groupIds = Object.prototype.hasOwnProperty.call(req.body, 'group_ids')
+      ? numericIds(req.body.group_ids)
+      : (groupSelectionProvided ? [] : db.prepare('SELECT id FROM user_groups ORDER BY id').all().map((group) => group.id));
+    const validGroupIds = new Set(db.prepare('SELECT id FROM user_groups').all().map((group) => group.id));
+    if (!name || prefix.length < 4 || prefix.length > 8 || numberLength === null || prefix.length >= numberLength || !['debit', 'credit'].includes(cardType) || !groupIds.length || !groupIds.every((id) => validGroupIds.has(id))) {
+      return redirectMessage(res, '/admin/bins', 'error', '请填写有效 BIN、卡类型并至少选择一个可用分组。');
     }
     try {
       const now = Date.now();
-      db.prepare(`
-        INSERT INTO bins (name, prefix, brand, card_type, country, number_length, is_active, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
-      `).run(name, prefix, brand || 'Visa', cardType, country || 'CN', numberLength, now, now);
+      db.transaction(() => {
+        const result = db.prepare(`
+          INSERT INTO bins (name, prefix, brand, card_type, country, number_length, require_3ds, is_active, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+        `).run(name, prefix, brand || 'Visa', cardType, country || 'CN', numberLength, require3ds, now, now);
+        const insert = db.prepare('INSERT INTO bin_groups (bin_id, group_id) VALUES (?, ?)');
+        for (const groupId of groupIds) insert.run(Number(result.lastInsertRowid), groupId);
+      })();
       return redirectMessage(res, '/admin/bins', 'ok', `BIN ${prefix} 已创建。`);
     } catch (error) {
       if (String(error.message).includes('UNIQUE')) return redirectMessage(res, '/admin/bins', 'error', '该 BIN 前缀已存在。');
@@ -221,15 +244,26 @@ function router({ db, config, notification, logger }) {
     const cardType = String(req.body.card_type || 'debit').trim();
     const country = String(req.body.country || 'CN').trim().toUpperCase();
     const numberLength = integer(req.body.number_length, 12, 19);
-    const isActive = req.body.is_active === '1' ? 1 : 0;
-    if (!id || !name || prefix.length < 4 || prefix.length > 8 || numberLength === null || prefix.length >= numberLength) {
+    const isActive = req.body.is_active === undefined ? 1 : (req.body.is_active === '1' ? 1 : 0);
+    const require3ds = req.body.require_3ds === undefined ? 1 : (req.body.require_3ds === '1' ? 1 : 0);
+    const groupSelectionProvided = req.body.group_ids_present === '1' || Object.prototype.hasOwnProperty.call(req.body, 'group_ids');
+    const groupIds = Object.prototype.hasOwnProperty.call(req.body, 'group_ids')
+      ? numericIds(req.body.group_ids)
+      : (groupSelectionProvided ? [] : db.prepare('SELECT group_id FROM bin_groups WHERE bin_id = ?').all(id).map((row) => row.group_id));
+    const validGroupIds = new Set(db.prepare('SELECT id FROM user_groups').all().map((group) => group.id));
+    if (!id || !name || prefix.length < 4 || prefix.length > 8 || numberLength === null || prefix.length >= numberLength || !['debit', 'credit'].includes(cardType) || !groupIds.length || !groupIds.every((groupId) => validGroupIds.has(groupId))) {
       return redirectMessage(res, '/admin/bins', 'error', 'BIN 参数无效。');
     }
     try {
-      db.prepare(`
-        UPDATE bins SET name = ?, prefix = ?, brand = ?, card_type = ?, country = ?, number_length = ?, is_active = ?, updated_at = ?
-        WHERE id = ?
-      `).run(name, prefix, brand || 'Visa', cardType, country || 'CN', numberLength, isActive, Date.now(), id);
+      db.transaction(() => {
+        db.prepare(`
+          UPDATE bins SET name = ?, prefix = ?, brand = ?, card_type = ?, country = ?, number_length = ?, require_3ds = ?, is_active = ?, updated_at = ?
+          WHERE id = ?
+        `).run(name, prefix, brand || 'Visa', cardType, country || 'CN', numberLength, require3ds, isActive, Date.now(), id);
+        db.prepare('DELETE FROM bin_groups WHERE bin_id = ?').run(id);
+        const insert = db.prepare('INSERT INTO bin_groups (bin_id, group_id) VALUES (?, ?)');
+        for (const groupId of groupIds) insert.run(id, groupId);
+      })();
       return redirectMessage(res, '/admin/bins', 'ok', 'BIN 已更新。');
     } catch (error) {
       if (String(error.message).includes('UNIQUE')) return redirectMessage(res, '/admin/bins', 'error', '该 BIN 前缀已存在。');
@@ -260,76 +294,69 @@ function router({ db, config, notification, logger }) {
     const search = String(req.query.q || '').trim();
     const conditions = [];
     const params = [];
-    if (req.user.role !== 'admin') {
+    let ownerUid = null;
+    if (req.user.role === 'admin' && req.query.owner_uid !== undefined) {
+      ownerUid = req.query.owner_uid;
+      const owner = db.prepare('SELECT id FROM users WHERE uid = ?').get(Number(ownerUid));
+      if (owner) { conditions.push('c.owner_user_id = ?'); params.push(owner.id); }
+      else conditions.push('1 = 0');
+    } else {
       conditions.push('c.owner_user_id = ?');
       params.push(req.user.id);
     }
-    if (allowedCardStatuses.has(status)) {
-      conditions.push('c.status = ?');
-      params.push(status);
-    }
-    if (search) {
-      conditions.push('(c.id LIKE ? OR c.last4 LIKE ?)');
-      params.push(`%${search}%`, `%${search}%`);
-    }
+    if (allowedCardStatuses.has(status)) { conditions.push('c.status = ?'); params.push(status); }
+    if (search) { conditions.push('(c.id LIKE ? OR c.last4 LIKE ?)'); params.push(`%${search}%`, `%${search}%`); }
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const cards = db.prepare(`
-      SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, u.username AS owner_username
-      FROM cards c
-      JOIN bins b ON b.id = c.bin_id
-      LEFT JOIN users u ON u.id = c.owner_user_id
-      ${where}
-      ORDER BY c.created_at DESC LIMIT 300
+      SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, b.require_3ds AS bin_require_3ds,
+        u.username AS owner_username, u.uid AS owner_uid
+      FROM cards c JOIN bins b ON b.id = c.bin_id LEFT JOIN users u ON u.id = c.owner_user_id
+      ${where} ORDER BY c.created_at DESC LIMIT 300
     `).all(...params).map((row) => mapCard(row, config.appSecret, false));
-    res.render('admin/cards', { title: req.user.role === 'admin' ? '虚拟卡管理' : '我的虚拟卡', cards, status, search, isAdmin: req.user.role === 'admin' });
+    res.render('admin/cards', { title: ownerUid ? `用户 UID ${ownerUid} 的虚拟卡` : '我的虚拟卡', cards, status, search, isAdmin: req.user.role === 'admin' });
   });
 
   route.get('/cards/new', (req, res) => {
-    const bins = db.prepare('SELECT * FROM bins WHERE is_active = 1 ORDER BY name').all();
-    const users = req.user.role === 'admin'
-      ? db.prepare('SELECT * FROM users WHERE is_active = 1 ORDER BY role DESC, username').all().map(mapUser)
-      : [];
-    res.render('admin/card-new', {
-      title: '创建虚拟卡',
-      bins,
-      users,
-      error: null,
-      form: {},
-      isAdmin: req.user.role === 'admin',
-      currentUser: req.user
-    });
+    const bins = req.user.role === 'admin'
+      ? db.prepare('SELECT * FROM bins WHERE is_active = 1 ORDER BY name').all()
+      : db.prepare(`SELECT DISTINCT b.* FROM bins b JOIN bin_groups bg ON bg.bin_id = b.id WHERE b.is_active = 1 AND bg.group_id = ? ORDER BY b.name`).all(req.user.groupId);
+    const users = req.user.role === 'admin' ? db.prepare('SELECT * FROM users WHERE is_active = 1 ORDER BY role DESC, username').all().map(mapUser) : [];
+    const group = db.prepare('SELECT * FROM user_groups WHERE id = ?').get(req.user.groupId);
+    res.render('admin/card-new', { title: '创建虚拟卡', bins, users, group, error: null, form: {}, isAdmin: req.user.role === 'admin', currentUser: req.user });
   });
 
   route.post('/cards', (req, res) => {
     const isAdmin = req.user.role === 'admin';
-    const bins = db.prepare('SELECT * FROM bins WHERE is_active = 1 ORDER BY name').all();
-    const users = isAdmin
-      ? db.prepare('SELECT * FROM users WHERE is_active = 1 ORDER BY role DESC, username').all().map(mapUser)
-      : [];
-    const binId = integer(req.body.bin_id, 1, Number.MAX_SAFE_INTEGER);
-    const bin = bins.find((item) => item.id === binId);
-    const expiresMonth = integer(req.body.expires_month, 1, 12);
-    const expiresYear = normalizeYear(req.body.expires_year);
-    const cvv = String(req.body.cvv || '').trim();
-    const pin = String(req.body.pin || '').trim();
-    const balanceMinor = isAdmin ? moneyInput(req.body.balance, { allowZero: true }) : 0;
-    const status = isAdmin ? String(req.body.status || 'active') : 'active';
-    const declineReason = isAdmin ? String(req.body.decline_reason || '').trim() : '';
+    const users = isAdmin ? db.prepare('SELECT * FROM users WHERE is_active = 1 ORDER BY role DESC, username').all().map(mapUser) : [];
     let ownerId = req.user.id;
     if (isAdmin && req.body.owner_user_id) {
       const requestedOwnerId = integer(req.body.owner_user_id, 1, Number.MAX_SAFE_INTEGER);
       if (requestedOwnerId && users.some((user) => user.id === requestedOwnerId)) ownerId = requestedOwnerId;
     }
+    const owner = db.prepare(`SELECT u.*, g.card_limit, g.card_bonus_minor FROM users u LEFT JOIN user_groups g ON g.id = u.group_id WHERE u.id = ?`).get(ownerId);
+    const bins = owner?.role === 'admin'
+      ? db.prepare('SELECT * FROM bins WHERE is_active = 1 ORDER BY name').all()
+      : db.prepare(`SELECT DISTINCT b.* FROM bins b JOIN bin_groups bg ON bg.bin_id = b.id WHERE b.is_active = 1 AND bg.group_id = ? ORDER BY b.name`).all(owner?.group_id);
+    const binId = integer(req.body.bin_id, 1, Number.MAX_SAFE_INTEGER);
+    const bin = bins.find((item) => item.id === binId);
+    const expiresMonth = integer(req.body.expires_month, 1, 12);
+    const expiresYear = normalizeYear(req.body.expires_year);
+    const cvv = String(req.body.cvv || '').trim();
+    let pin = String(req.body.pin || '').trim();
+    const status = owner?.role === 'admin' ? String(req.body.status || 'active') : 'active';
+    const declineReason = owner?.role === 'admin' ? String(req.body.decline_reason || '').trim() : '';
+    const balanceMinor = owner?.role === 'admin' ? moneyInput(req.body.balance, { allowZero: true }) : Number(owner?.card_bonus_minor || 0);
+    if (!pin && bin && !bin.require_3ds) pin = randomDigits(6);
+    const cardCount = db.prepare('SELECT COUNT(*) AS count FROM cards WHERE owner_user_id = ?').get(ownerId).count;
+    const overCardLimit = owner?.role !== 'admin' && cardCount >= Number(owner?.card_limit || 0);
+    const overBalanceLimit = owner?.card_balance_limit_minor !== null && owner?.card_balance_limit_minor !== undefined && balanceMinor > owner.card_balance_limit_minor;
     const currentYear = new Date().getFullYear();
-    if (!bin || expiresMonth === null || expiresYear === null || expiresYear < currentYear || expiresYear > currentYear + 30 || !/^\d{3,4}$/.test(cvv) || pin.length < 4 || pin.length > 64 || balanceMinor === null || !allowedCardStatuses.has(status)) {
+    if (!owner || !bin || overCardLimit || overBalanceLimit || expiresMonth === null || expiresYear === null || expiresYear < currentYear || expiresYear > currentYear + 30 || !/^\d{3,4}$/.test(cvv) || (bin.require_3ds && (pin.length < 4 || pin.length > 64)) || (pin && (pin.length < 4 || pin.length > 64)) || balanceMinor === null || !allowedCardStatuses.has(status)) {
       return res.status(400).render('admin/card-new', {
-        title: '创建虚拟卡',
-        bins,
-        users,
-        error: '请检查卡片参数。3DS 密码长度需为 4-64 位，CVV 为 3-4 位数字。',
-        form: req.body,
-        isAdmin,
-        currentUser: req.user
+        title: '创建虚拟卡', bins, users,
+        group: db.prepare('SELECT * FROM user_groups WHERE id = ?').get(owner?.group_id),
+        error: overCardLimit ? '已达到当前分组的开卡数量上限。' : (overBalanceLimit ? '开卡赠金超过账号卡面额度。' : '请检查卡片参数、BIN 分组权限和 3DS 配置。'),
+        form: req.body, isAdmin, currentUser: req.user
       });
     }
     const cardNumber = generateCardNumber(bin.prefix, bin.number_length);
@@ -358,7 +385,8 @@ function router({ db, config, notification, logger }) {
   route.get('/cards/:id', (req, res) => {
     const access = cardAccessCondition(req);
     const row = db.prepare(`
-      SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, u.username AS owner_username
+      SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, b.require_3ds AS bin_require_3ds,
+        u.username AS owner_username, u.uid AS owner_uid
       FROM cards c
       JOIN bins b ON b.id = c.bin_id
       LEFT JOIN users u ON u.id = c.owner_user_id
@@ -477,7 +505,7 @@ function router({ db, config, notification, logger }) {
       const card = db.prepare('SELECT id, balance_minor FROM cards WHERE id = ?').get(req.params.id);
       if (!card) return { status: 'missing' };
       if (card.balance_minor !== 0) return { status: 'nonzero', cardId: card.id, balanceMinor: card.balance_minor };
-      const pendingOrderCount = db.prepare("SELECT COUNT(*) AS count FROM orders WHERE card_id = ? AND status = 'PENDING'").get(card.id).count;
+      const pendingOrderCount = db.prepare("SELECT COUNT(*) AS count FROM orders WHERE card_id = ? AND (status = 'PENDING' OR (status = 'PAID' AND settled_at IS NULL))").get(card.id).count;
       if (pendingOrderCount > 0) return { status: 'in-use', cardId: card.id, pendingOrderCount };
       db.prepare('UPDATE orders SET card_id = NULL WHERE card_id = ?').run(card.id);
       db.prepare('DELETE FROM card_transactions WHERE card_id = ?').run(card.id);
@@ -489,7 +517,7 @@ function router({ db, config, notification, logger }) {
       return redirectMessage(res, `/admin/cards/${result.cardId}`, 'error', `卡片余额必须为 0 才能删除，当前余额为 ${formatMinor(result.balanceMinor)}。`);
     }
     if (result.status === 'in-use') {
-      return redirectMessage(res, `/admin/cards/${result.cardId}`, 'error', `该卡仍有 ${result.pendingOrderCount} 个进行中的订单，不能删除。`);
+      return redirectMessage(res, `/admin/cards/${result.cardId}`, 'error', `该卡仍有 ${result.pendingOrderCount} 个进行中或待结算订单，不能删除。`);
     }
     return redirectMessage(res, '/admin/cards', 'ok', `虚拟卡 ${result.cardId} 已删除。`);
   });
@@ -535,19 +563,22 @@ function router({ db, config, notification, logger }) {
     const scope = orderScope(req);
     const extraCondition = scope.condition ? `AND ${scope.condition}` : '';
     const row = id ? db.prepare(`
-      SELECT o.*, m.pid AS merchant_pid, m.name AS merchant_name, c.last4 AS card_last4
+      SELECT o.*, m.pid AS merchant_pid, m.name AS merchant_name, c.last4 AS card_last4,
+        u.uid AS payer_uid, u.username AS payer_username
       FROM orders o JOIN merchants m ON m.id = o.merchant_id LEFT JOIN cards c ON c.id = o.card_id
+      LEFT JOIN users u ON u.id = o.payer_user_id
       WHERE o.id = ? ${extraCondition}
     `).get(id, ...scope.params) : null;
     if (!row) return res.status(404).render('error', { title: '订单不存在', message: '未找到该订单。', statusCode: 404 });
     const logs = db.prepare('SELECT * FROM callback_logs WHERE order_id = ? ORDER BY attempted_at DESC').all(id);
     const order = mapOrder(row);
-    const merchant = db.prepare('SELECT * FROM merchants WHERE id = ?').get(order.merchantId);
+    const merchantRow = db.prepare('SELECT * FROM merchants WHERE id = ?').get(order.merchantId);
+    const merchant = mapMerchant(merchantRow, config.appSecret);
     res.render('admin/order-detail', {
       title: `订单 ${order.tradeNo}`,
-      order,
+      order: renderOrderContext(order, merchant),
       logs,
-      merchant: mapMerchant(merchant, config.appSecret),
+      merchant,
       isAdmin: req.user.role === 'admin',
       ordersLiveFingerprint: orderFingerprint(req),
       autoRefreshSeconds: order.status === 'PENDING' ? 3 : null
@@ -566,75 +597,16 @@ function router({ db, config, notification, logger }) {
     try {
       const order = simulateChargeback({ db, orderId: id });
       notification.enqueue(order.id, { force: true });
-      return redirectMessage(res, `/admin/orders/${id}`, 'ok', '已模拟拒付/退单，金额已退回卡片。');
+      return redirectMessage(res, `/admin/orders/${id}`, 'ok', '退款已完成，金额已按原支付渠道退回。');
     } catch (error) {
       if (error instanceof EpayError) return redirectMessage(res, `/admin/orders/${id}`, 'error', error.message);
       throw error;
     }
   });
 
-  route.get('/users', (req, res) => {
-    const users = db.prepare(`
-      SELECT u.*, COUNT(c.id) AS card_count
-      FROM users u
-      LEFT JOIN cards c ON c.owner_user_id = u.id
-      GROUP BY u.id
-      ORDER BY CASE u.role WHEN 'admin' THEN 0 ELSE 1 END, u.created_at DESC
-    `).all();
-    res.render('admin/users', {
-      title: '用户管理',
-      users,
-      currentUserId: req.user.id,
-      error: typeof req.query.error === 'string' ? req.query.error : null,
-      ok: typeof req.query.ok === 'string' ? req.query.ok : null
-    });
-  });
-
-  route.post('/users', (req, res) => {
-    const username = String(req.body.username || '').trim();
-    const password = String(req.body.password || '');
-    const role = String(req.body.role || 'user');
-    if (!/^[A-Za-z0-9_.-]{3,32}$/.test(username) || password.length < 8 || password.length > 128 || !['admin', 'user'].includes(role)) {
-      return redirectMessage(res, '/admin/users', 'error', '用户名需为 3-32 位字母、数字、点、下划线或横线，密码至少 8 位。');
-    }
-    try {
-      const now = Date.now();
-      db.prepare(`
-        INSERT INTO users (username, password_hash, role, is_active, created_at, updated_at)
-        VALUES (?, ?, ?, 1, ?, ?)
-      `).run(username, hashPassword(password), role, now, now);
-      return redirectMessage(res, '/admin/users', 'ok', `用户 ${username} 已创建。`);
-    } catch (error) {
-      if (String(error.message).includes('UNIQUE')) return redirectMessage(res, '/admin/users', 'error', '该用户名已存在。');
-      throw error;
-    }
-  });
-
-  route.post('/users/:id/update', (req, res) => {
-    const id = integer(req.params.id, 1, Number.MAX_SAFE_INTEGER);
-    const target = id ? db.prepare('SELECT * FROM users WHERE id = ?').get(id) : null;
-    if (!target) return redirectMessage(res, '/admin/users', 'error', '用户不存在。');
-    const role = String(req.body.role || target.role);
-    const isActive = req.body.is_active === '1' ? 1 : 0;
-    const password = String(req.body.password || '');
-    if (!['admin', 'user'].includes(role) || (password && (password.length < 8 || password.length > 128))) {
-      return redirectMessage(res, '/admin/users', 'error', '用户参数无效，密码至少需要 8 位。');
-    }
-    if (target.id === req.user.id && (role !== 'admin' || !isActive)) {
-      return redirectMessage(res, '/admin/users', 'error', '不能停用当前登录账号或取消自己的管理员权限。');
-    }
-    if (target.role === 'admin' && (role !== 'admin' || !isActive)) {
-      const otherAdmins = db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND is_active = 1 AND id <> ?").get(target.id).count;
-      if (!otherAdmins) return redirectMessage(res, '/admin/users', 'error', '系统至少需要保留一个启用的管理员。');
-    }
-    db.prepare(`
-      UPDATE users SET password_hash = ?, role = ?, is_active = ?, updated_at = ? WHERE id = ?
-    `).run(password ? hashPassword(password) : target.password_hash, role, isActive, Date.now(), target.id);
-    redirectMessage(res, '/admin/users', 'ok', `用户 ${target.username} 已更新。`);
-  });
 
   route.get('/merchants', (req, res) => {
-    const rows = db.prepare('SELECT * FROM merchants ORDER BY created_at DESC').all();
+    const rows = db.prepare('SELECT * FROM merchants WHERE deleted_at IS NULL ORDER BY created_at DESC').all();
     const merchants = rows.map((row) => mapMerchant(row, config.appSecret));
     res.render('admin/merchants', { title: '商户管理', merchants });
   });
@@ -663,8 +635,9 @@ function router({ db, config, notification, logger }) {
     const id = integer(req.params.id, 1, Number.MAX_SAFE_INTEGER);
     const name = String(req.body.name || '').trim();
     const isActive = req.body.is_active === '1' ? 1 : 0;
-    if (!id || !name) return redirectMessage(res, '/admin/merchants', 'error', '商户参数无效。');
-    db.prepare('UPDATE merchants SET name = ?, is_active = ?, updated_at = ? WHERE id = ?').run(name, isActive, Date.now(), id);
+    const commissionBps = integer(req.body.commission_bps, 0, 10000);
+    if (!id || !name || commissionBps === null) return redirectMessage(res, '/admin/merchants', 'error', '商户参数无效。');
+    db.prepare('UPDATE merchants SET name = ?, is_active = ?, commission_bps = ?, updated_at = ? WHERE id = ?').run(name, isActive, commissionBps, Date.now(), id);
     redirectMessage(res, '/admin/merchants', 'ok', '商户信息已更新。');
   });
 
@@ -676,6 +649,67 @@ function router({ db, config, notification, logger }) {
     redirectMessage(res, '/admin/merchants', 'ok', `商户密钥已轮换，新密钥：${key}`);
   });
 
+  route.get('/merchants/:id', (req, res) => {
+    const merchantRow = db.prepare('SELECT * FROM merchants WHERE id = ?').get(Number(req.params.id));
+    if (!merchantRow) return res.status(404).render('error', { title: '商户不存在', message: '未找到该商户。', statusCode: 404 });
+    const merchant = mapMerchant(merchantRow, config.appSecret);
+    const transactions = db.prepare('SELECT * FROM merchant_transactions WHERE merchant_id = ? ORDER BY created_at DESC LIMIT 200').all(merchant.id);
+    const orders = db.prepare(`
+      SELECT o.*, m.pid AS merchant_pid, m.name AS merchant_name, c.last4 AS card_last4,
+        u.uid AS payer_uid, u.username AS payer_username
+      FROM orders o JOIN merchants m ON m.id = o.merchant_id LEFT JOIN cards c ON c.id = o.card_id
+      LEFT JOIN users u ON u.id = o.payer_user_id WHERE o.merchant_id = ? ORDER BY o.created_at DESC LIMIT 200
+    `).all(merchant.id).map(mapOrder);
+    const refunds = db.prepare('SELECT r.*, o.trade_no FROM refunds r JOIN orders o ON o.id = r.order_id WHERE r.merchant_id = ? ORDER BY r.created_at DESC LIMIT 100').all(merchant.id);
+    res.render('admin/merchant-detail', { title: `商户 ${merchant.pid}`, merchant, transactions, orders, refunds, currentTime: Date.now() });
+  });
+
+  route.post('/merchants/:id/balance', (req, res) => {
+    const id = integer(req.params.id, 1, Number.MAX_SAFE_INTEGER);
+    const merchant = id ? db.prepare('SELECT * FROM merchants WHERE id = ?').get(id) : null;
+    const operation = String(req.body.operation || 'add');
+    const amount = moneyInput(req.body.amount, operation === 'set');
+    if (!merchant || merchant.deleted_at || amount === null || !['add', 'subtract', 'set'].includes(operation)) return redirectMessage(res, '/admin/merchants', 'error', '商户余额参数无效。');
+    const delta = operation === 'add' ? amount : (operation === 'subtract' ? -amount : amount - merchant.balance_minor);
+    const nextBalance = merchant.balance_minor + delta;
+    if (nextBalance < 0) return redirectMessage(res, `/admin/merchants/${id}`, 'error', '商户余额不能为负数。');
+    db.transaction(() => {
+      db.prepare('UPDATE merchants SET balance_minor = ?, updated_at = ? WHERE id = ?').run(nextBalance, Date.now(), id);
+      db.prepare(`INSERT INTO merchant_transactions (merchant_id, order_id, type, amount_minor, balance_after_minor, reference, note, created_at)
+        VALUES (?, NULL, 'ADMIN_ADJUSTMENT', ?, ?, ?, '管理员调整商户余额', ?)`)
+        .run(id, delta, nextBalance, `ADJ:${Date.now()}:${randomToken(8)}`, Date.now());
+    })();
+    return redirectMessage(res, `/admin/merchants/${id}`, 'ok', '商户余额已调整。');
+  });
+
+  route.post('/merchants/:id/delete', (req, res) => {
+    const id = integer(req.params.id, 1, Number.MAX_SAFE_INTEGER);
+    const merchant = id ? db.prepare('SELECT * FROM merchants WHERE id = ?').get(id) : null;
+    if (!merchant) return redirectMessage(res, '/admin/merchants', 'error', '商户不存在。');
+    if (merchant.is_default) return redirectMessage(res, '/admin/merchants', 'error', '默认商户不可删除。');
+    if (merchant.balance_minor !== 0) return redirectMessage(res, '/admin/merchants', 'error', '商户余额必须为 0 才能删除。');
+    const activeOrders = db.prepare("SELECT COUNT(*) AS count FROM orders WHERE merchant_id = ? AND (status = 'PENDING' OR (status = 'PAID' AND settled_at IS NULL))").get(id).count;
+    if (activeOrders > 0) return redirectMessage(res, '/admin/merchants', 'error', '商户仍有进行中或待结算订单，不能删除。');
+    db.prepare('UPDATE merchants SET is_active = 0, deleted_at = ?, updated_at = ? WHERE id = ?').run(Date.now(), Date.now(), id);
+    return redirectMessage(res, '/admin/merchants', 'ok', '商户已删除，历史订单仍保留。');
+  });
+
+  route.post('/merchants/:merchantId/orders/:orderId/refund', (req, res) => {
+    const merchantId = integer(req.params.merchantId, 1, Number.MAX_SAFE_INTEGER);
+    const orderId = integer(req.params.orderId, 1, Number.MAX_SAFE_INTEGER);
+    if (!merchantId || !orderId) return redirectMessage(res, '/admin/merchants', 'error', '退款参数无效。');
+    try {
+      const rawAmount = String(req.body.amount || '').trim();
+      const amountMinor = rawAmount ? moneyInput(rawAmount, { allowZero: false }) : null;
+      if (rawAmount && amountMinor === null) throw new EpayError('退款金额无效', 'INVALID_REFUND_AMOUNT', 400);
+      const result = refundOrder({ db, orderId, merchantId, amountMinor, reason: String(req.body.reason || '商户后台退款'), createdBy: 'admin-merchant-panel' });
+      notification.enqueue(result.order.id);
+      return redirectMessage(res, `/admin/merchants/${merchantId}`, 'ok', `退款成功：${result.refundNo}。`);
+    } catch (error) {
+      return redirectMessage(res, `/admin/merchants/${merchantId}`, 'error', error.message);
+    }
+  });
+
   route.get('/settings', (req, res) => {
     const settings = getAllSettings(db);
     res.render('admin/settings', { title: '系统设置', settings });
@@ -685,20 +719,87 @@ function router({ db, config, notification, logger }) {
     const siteName = String(req.body.site_name || '').trim().slice(0, 80) || 'Epay Test Gateway';
     const timeout = integer(req.body.order_timeout_seconds, 60, 86400);
     const currency = String(req.body.default_currency || 'CNY').trim().toUpperCase();
-    const requireBinding = req.body.require_card_binding === '1' ? '1' : '0';
-    const require3ds = req.body.require_3ds === '1' ? '1' : '0';
-    const autoSuccessPayments = req.body.auto_success_payments === '1' ? '1' : '0';
     const supportedTypes = String(req.body.supported_types || '').split(',').map((item) => item.trim()).filter(Boolean).join(',');
-    if (timeout === null || !/^[A-Z]{3}$/.test(currency) || !supportedTypes) {
-      return redirectMessage(res, '/admin/settings', 'error', '设置参数无效。订单超时需为 60-86400 秒。');
+    const smtpPort = integer(req.body.smtp_port, 1, 65535);
+    const inviteLimit = integer(req.body.invite_default_limit, 0, 1000000);
+    const inviteRandomLength = integer(req.body.invite_random_length, 6, 20);
+    const inviteCustomFee = moneyInput(req.body.invite_custom_fee, { allowZero: true });
+    const inviteSlotPrice = moneyInput(req.body.invite_slot_price, { allowZero: true });
+    const depositBps = integer(req.body.card_deposit_fee_bps, 0, 10000);
+    const withdrawBps = integer(req.body.card_withdraw_fee_bps, 0, 10000);
+    const minDeposit = moneyInput(req.body.card_min_deposit, { allowZero: true });
+    const minDepositFee = moneyInput(req.body.card_min_deposit_fee, { allowZero: true });
+    const minWithdraw = moneyInput(req.body.card_min_withdraw, { allowZero: true });
+    const minWithdrawFee = moneyInput(req.body.card_min_withdraw_fee, { allowZero: true });
+    const guaranteeSeconds = integer(req.body.merchant_guarantee_seconds, 60, 86400);
+    const emailTtl = integer(req.body.email_code_ttl_seconds, 60, 86400);
+    const emailResend = integer(req.body.email_code_resend_seconds, 0, 86400);
+    const usernameRegex = String(req.body.username_regex || '').trim();
+    const passwordRegex = String(req.body.password_regex || '').trim();
+    const emailRegex = String(req.body.email_regex || '').trim();
+    const smtpHost = String(req.body.smtp_host || '').trim();
+    const smtpUser = String(req.body.smtp_user || '').trim();
+    const mailFrom = String(req.body.mail_from || '').trim();
+    const registrationRequiresEmail = req.body.registration_require_email === '1';
+    const smtpPasswordProvided = Boolean(String(req.body.smtp_password || '').trim());
+    const smtpPasswordConfigured = Boolean(getSetting(db, 'smtp_password_enc', ''));
+    if (registrationRequiresEmail && (!smtpHost || (!mailFrom && !smtpUser) || (smtpUser && !smtpPasswordProvided && !smtpPasswordConfigured))) {
+      return redirectMessage(res, '/admin/settings', 'error', '开启邮箱注册验证前，请先完整配置 SMTP 主机、发件地址和认证信息。');
     }
-    setSetting(db, 'site_name', siteName);
-    setSetting(db, 'order_timeout_seconds', timeout);
-    setSetting(db, 'default_currency', currency);
-    setSetting(db, 'require_card_binding', requireBinding);
-    setSetting(db, 'require_3ds', require3ds);
-    setSetting(db, 'auto_success_payments', autoSuccessPayments);
-    setSetting(db, 'supported_types', supportedTypes);
+    for (const [label, pattern] of [['用户名', usernameRegex], ['密码', passwordRegex], ['邮箱', emailRegex]]) {
+      if (!pattern || pattern.length > 500) return redirectMessage(res, '/admin/settings', 'error', `${label}正则不能为空且不能超过 500 个字符。`);
+      try { new RegExp(pattern); } catch { return redirectMessage(res, '/admin/settings', 'error', `${label}正则表达式无效。`); }
+    }
+    if (timeout === null || !/^[A-Z]{3}$/.test(currency) || !supportedTypes || smtpPort === null || inviteLimit === null || inviteRandomLength === null || inviteCustomFee === null || inviteSlotPrice === null || depositBps === null || withdrawBps === null || minDeposit === null || minDepositFee === null || minWithdraw === null || minWithdrawFee === null || guaranteeSeconds === null || emailTtl === null || emailResend === null) {
+      return redirectMessage(res, '/admin/settings', 'error', '设置参数无效，请检查金额、比例和数值范围。');
+    }
+    const currentCurrency = getSetting(db, 'default_currency', 'CNY');
+    if (currency !== currentCurrency) {
+      const financialRows = db.prepare(`
+        SELECT (SELECT COUNT(*) FROM cards) + (SELECT COUNT(*) FROM orders) + (SELECT COUNT(*) FROM merchant_transactions) AS count
+      `).get().count;
+      if (financialRows > 0) return redirectMessage(res, '/admin/settings', 'error', '已有卡片或交易数据，不能直接切换结算币种。');
+    }
+    const emailMode = ['blacklist', 'whitelist'].includes(req.body.email_list_mode) ? req.body.email_list_mode : 'blacklist';
+    db.transaction(() => {
+      setSetting(db, 'site_name', siteName);
+      setSetting(db, 'order_timeout_seconds', timeout);
+      setSetting(db, 'default_currency', currency);
+      setSetting(db, 'supported_types', supportedTypes);
+      setSetting(db, 'require_card_binding', req.body.require_card_binding === '1' ? '1' : '0');
+      setSetting(db, 'auto_success_payments', req.body.auto_success_payments === '1' ? '1' : '0');
+      setSetting(db, 'registration_enabled', req.body.registration_enabled === '1' ? '1' : '0');
+      setSetting(db, 'registration_require_invite', req.body.registration_require_invite === '1' ? '1' : '0');
+      setSetting(db, 'user_invites_enabled', req.body.user_invites_enabled === '1' ? '1' : '0');
+      setSetting(db, 'registration_require_email', req.body.registration_require_email === '1' ? '1' : '0');
+      setSetting(db, 'email_list_mode', emailMode);
+      setSetting(db, 'email_whitelist', String(req.body.email_whitelist || '').trim());
+      setSetting(db, 'email_blacklist', String(req.body.email_blacklist || '').trim());
+      setSetting(db, 'username_regex', usernameRegex);
+      setSetting(db, 'password_regex', passwordRegex);
+      setSetting(db, 'email_regex', emailRegex);
+      setSetting(db, 'email_code_ttl_seconds', emailTtl);
+      setSetting(db, 'email_code_resend_seconds', emailResend);
+      setSetting(db, 'smtp_host', smtpHost);
+      setSetting(db, 'smtp_port', smtpPort);
+      setSetting(db, 'smtp_secure', req.body.smtp_secure === '1' ? '1' : '0');
+      setSetting(db, 'smtp_user', smtpUser);
+      if (String(req.body.smtp_password || '').trim()) setSetting(db, 'smtp_password_enc', encrypt(String(req.body.smtp_password).trim(), config.appSecret));
+      setSetting(db, 'mail_from', mailFrom);
+      setSetting(db, 'invite_default_limit', inviteLimit);
+      setSetting(db, 'invite_random_length', inviteRandomLength);
+      setSetting(db, 'invite_custom_fee_minor', inviteCustomFee);
+      setSetting(db, 'invite_slot_purchase_enabled', req.body.invite_slot_purchase_enabled === '1' ? '1' : '0');
+      setSetting(db, 'invite_slot_price_minor', inviteSlotPrice);
+      setSetting(db, 'card_withdraw_enabled', req.body.card_withdraw_enabled === '1' ? '1' : '0');
+      setSetting(db, 'card_deposit_fee_bps', depositBps);
+      setSetting(db, 'card_min_deposit_minor', minDeposit);
+      setSetting(db, 'card_min_deposit_fee_minor', minDepositFee);
+      setSetting(db, 'card_withdraw_fee_bps', withdrawBps);
+      setSetting(db, 'card_min_withdraw_minor', minWithdraw);
+      setSetting(db, 'card_min_withdraw_fee_minor', minWithdrawFee);
+      setSetting(db, 'merchant_guarantee_seconds', guaranteeSeconds);
+    })();
     res.app.locals.siteName = siteName;
     redirectMessage(res, '/admin/settings', 'ok', '系统设置已保存。');
   });

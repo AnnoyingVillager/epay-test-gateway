@@ -12,21 +12,21 @@
   <% } else { %>
   <form method="post" action="/admin/cards" class="form-grid card-create-form">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <label class="field field-span-2"><span>选择卡 BIN</span><select name="bin_id" required><option value="">请选择</option><% bins.forEach((bin) => { %><option value="<%= bin.id %>" <%= String(form.bin_id) === String(bin.id) ? 'selected' : '' %>><%= bin.name %> · <%= bin.prefix %> · <%= bin.number_length %> 位</option><% }) %></select></label>
+    <label class="field field-span-2"><span>选择卡 BIN</span><select name="bin_id" required><option value="">请选择</option><% bins.forEach((bin) => { %><option value="<%= bin.id %>" <%= String(form.bin_id) === String(bin.id) ? 'selected' : '' %>><%= bin.name %> · <%= bin.prefix %> · <%= bin.number_length %> 位 · 3DS <%= bin.require_3ds ? '开启' : '关闭' %></option><% }) %></select></label>
     <% if (isAdmin) { %>
       <label class="field field-span-2"><span>所属用户</span><select name="owner_user_id"><% users.forEach((user) => { %><option value="<%= user.id %>" <%= String(form.owner_user_id || currentUser.id) === String(user.id) ? 'selected' : '' %>><%= user.username %> · <%= user.role === 'admin' ? '管理员' : '普通用户' %></option><% }) %></select></label>
     <% } %>
     <% if (isAdmin) { %>
       <label class="field"><span>初始余额</span><input type="number" name="balance" min="0" step="0.01" value="<%= form.balance || '1000.00' %>" required></label>
     <% } else { %>
-      <label class="field"><span>初始余额</span><input value="0.00" disabled><small>普通用户创建的卡片初始余额固定为 0，如需充值请联系管理员。</small></label>
+      <label class="field"><span>开卡赠金</span><input value="<%= formatMinor(group?.card_bonus_minor || 0) %>" disabled><small><%= group?.name || 'Default' %> 分组每张开卡赠送 <%= formatMinor(group?.card_bonus_minor || 0) %> CNY；分组上限 <%= group?.card_limit || 0 %> 张。</small></label>
       <input type="hidden" name="balance" value="0">
     <% } %>
     <label class="field"><span>货币</span><input value="由系统设置决定" disabled></label>
     <label class="field"><span>有效期月份</span><input type="number" name="expires_month" min="1" max="12" value="<%= form.expires_month || 12 %>" required></label>
     <label class="field"><span>有效期年份</span><input type="number" name="expires_year" min="<%= new Date().getFullYear() %>" max="<%= new Date().getFullYear() + 30 %>" value="<%= form.expires_year || new Date().getFullYear() + 5 %>" required></label>
     <label class="field"><span>CVV</span><input type="text" name="cvv" inputmode="numeric" pattern="\d{3,4}" value="<%= form.cvv || '123' %>" required></label>
-    <label class="field"><span>3DS 密码</span><input type="text" name="pin" minlength="4" maxlength="64" value="<%= form.pin || '123456' %>" required></label>
+    <label class="field"><span>3DS 密码</span><input type="text" name="pin" minlength="4" maxlength="64" value="<%= form.pin || '' %>" placeholder="BIN 开启 3DS 时必填"><small>关闭 3DS 的 BIN 可留空，系统会自动生成密码。</small></label>
     <% if (isAdmin) { %>
       <label class="field"><span>初始状态</span><select name="status"><option value="active" <%= form.status !== 'declined' && form.status !== 'frozen' ? 'selected' : '' %>>可支付</option><option value="declined" <%= form.status === 'declined' ? 'selected' : '' %>>模拟拒付</option><option value="frozen" <%= form.status === 'frozen' ? 'selected' : '' %>>冻结</option></select></label>
       <label class="field"><span>拒付原因</span><input name="decline_reason" value="<%= form.decline_reason || '风控拒绝' %>" placeholder="状态为模拟拒付时显示"></label>

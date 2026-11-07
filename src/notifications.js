@@ -10,6 +10,21 @@ class NotificationService {
   }
 
   callbackPayload(order, merchant) {
+    if (order.callbackEvent === 'REFUND' || order.status === 'CHARGEBACK') {
+      const refund = order.id ? this.db.prepare('SELECT refund_no, out_refund_no, amount_minor FROM refunds WHERE order_id = ? ORDER BY created_at DESC LIMIT 1').get(order.id) : null;
+      const fullyRefunded = order.status === 'CHARGEBACK';
+      return {
+        event: fullyRefunded ? 'payment.chargeback' : 'refund.success',
+        tradeStatus: fullyRefunded ? 'TRADE_CLOSED' : 'TRADE_SUCCESS',
+        extras: {
+          refund_status: 'REFUND_SUCCESS',
+          refund_no: refund?.refund_no || '',
+          out_refund_no: refund?.out_refund_no || '',
+          refund_money: formatMinor(order.refundedMinor || refund?.amount_minor || 0),
+          ...(fullyRefunded ? { errcode: 'CHARGEBACK', errmsg: 'Full refund completed' } : {})
+        }
+      };
+    }
     if (order.status === 'PAID') {
       return {
         event: 'payment.success',
@@ -34,7 +49,14 @@ class NotificationService {
     const failureReasons = {
       CARD_DECLINED: { errcode: 'CARD_DECLINED', errmsg: 'Card payment declined' },
       INSUFFICIENT_FUNDS: { errcode: 'INSUFFICIENT_FUNDS', errmsg: 'Insufficient card balance' },
-      CARD_EXPIRED: { errcode: 'CARD_EXPIRED', errmsg: 'Card has expired' }
+      CARD_EXPIRED: { errcode: 'CARD_EXPIRED', errmsg: 'Card has expired' },
+      CARD_RISK_FROZEN: { errcode: 'CARD_RISK_FROZEN', errmsg: 'Card payments are frozen' },
+      ACCOUNT_RISK_BLOCKED: { errcode: 'ACCOUNT_RISK_BLOCKED', errmsg: 'Card owner account is disabled or blocked' },
+      BIN_DISABLED: { errcode: 'BIN_DISABLED', errmsg: 'Card BIN is disabled' },
+      CARD_BIN_ACCESS_REVOKED: { errcode: 'CARD_BIN_ACCESS_REVOKED', errmsg: 'Card BIN is no longer available to the owner group' },
+      CURRENCY_MISMATCH: { errcode: 'CURRENCY_MISMATCH', errmsg: 'Payment currency does not match the funding source' },
+      SPEND_LIMIT_EXCEEDED: { errcode: 'SPEND_LIMIT_EXCEEDED', errmsg: 'Account spending limit exceeded' },
+      INSUFFICIENT_ACCOUNT_BALANCE: { errcode: 'INSUFFICIENT_ACCOUNT_BALANCE', errmsg: 'Insufficient account balance' }
     };
     return {
       event: 'payment.failed',

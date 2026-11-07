@@ -1,39 +1,41 @@
 # Epay Test Gateway
 
-一个自托管、面向开发联调与自动化测试的 Epay 兼容网关。内置用户分权、虚拟银行卡、卡 BIN、3DS 密码、余额、订单超时、模拟拒付/退单、异步回调和管理面板。
+一个自托管、面向开发联调与自动化测试的 Epay 兼容网关。v2 内置 UID 用户体系、注册与邀请、分组额度、账户余额、虚拟银行卡、按 BIN 配置 3DS、商户结算与担保退款、订单超时、异步回调和管理面板。
 
 > **仅用于测试环境。** 本项目不会连接真实银行或支付网络，也不应处理真实银行卡、密码或生产资金。
 
 ## 功能
 
 - 兼容常见 Epay 风格的 `/submit.php`、`/api.php`、`/mapi.php` 与 MD5 签名流程
-- 用户管理：区分管理员与普通用户；普通用户仅能创建、查看自己的卡片并消费
-- 普通用户创建的虚拟卡初始余额固定为 0，且不能自行修改余额
-- 管理面板：仪表盘、虚拟卡、卡 BIN、订单、用户、商户、系统设置
+- 用户管理：根管理员 UID 固定为 0；每个账号使用独立 UID，普通用户可注册、邀请、充值、提现和消费
+- 普通用户按所属分组获得开卡赠金（Default 700、VIP 7000、SVIP 70000 CNY），不能自行编辑卡余额
+- 管理面板：仪表盘、虚拟卡、卡 BIN、账户、邀请、订单、用户、分组、商户、系统设置
 - 创建符合 Luhn 校验的虚拟卡号，支持自定义 BIN 前缀、品牌、卡号长度
 - 管理员可修改虚拟卡余额、有效期、CVV、3DS 密码、状态，并记录手工消费
 - 管理员可删除余额为 0 且无进行中订单的虚拟卡；仅当 BIN 内没有卡片时可删除 BIN
-- 一键“模拟拒付”，并可模拟已支付订单的拒付/退单
+- 借记卡支付后即时结算且不可退款；信用卡与账户余额支付在担保期内可原路退款
 - 订单绑卡：已绑定订单只接受指定虚拟卡；未绑定订单可登录选卡，或通过卡号、有效期和 CVV 绑卡
-- 3DS 验证可在后台开关；关闭后支付确认无需输入 3DS 密码
+- 3DS 验证按卡 BIN 独立开关；关闭后支付确认无需输入 3DS 密码
 - 管理员可开启“自动成功模式”，让所有通过签名校验的支付请求直接完成，并立即返回 Epay 成功参数
 - 未携带 `bind_card` 的 `/submit.php` 请求不再报错，会跳转到绑卡支付页
 - 订单超时倒计时、自动过期和服务端二次校验
 - 后台订单页轮询状态变化，支付成功、失败、超时或回调更新后自动刷新，待支付页面另有服务端刷新兜底
 - 支付确认使用 AJAX 提交：按钮立即变灰并防止重复点击，成功后先显示“订单已完成”再自动返回商户
 - 支付成功、失败、超时、拒付均生成签名回调；成功或失败都按 Epay 参数返回商户
-- SQLite 数据持久化，单容器部署
+- 注册规则、邮箱黑白名单、SMTP、邀请码与邀请名额、分组赠金及消费限额均可后台配置
+- 商户余额、佣金比例、借记卡即时结算、信用卡担保结算和退款 API
+- SQLite 数据持久化并内置旧库迁移，单容器部署
 - 多阶段 Dockerfile，GitHub Actions 自动构建 `linux/amd64` 与 `linux/arm64` 镜像
 
 ## 已发布镜像
 
 - `ghcr.io/annoyingvillager/epay-test-gateway:latest`
-- `ghcr.io/annoyingvillager/epay-test-gateway:1.2.5` 和 `:1.2`（对应 Git 标签 `v1.2.5`）
+- `ghcr.io/annoyingvillager/epay-test-gateway:2.0.0` 和 `:2.0`（对应 Git 标签 `v2.0.0`）
 - 同时提供 `linux/amd64` 与 `linux/arm64` 多架构镜像
 
 ## 无需克隆源码部署
 
-只需要下载一个 `docker-compose.yml`。所有部署参数都在该文件内，无需准备 `.env`，也无需 clone 源码。
+只需要下载 `docker-compose.yml` 和 `.env.example`，将后者保存为本地 `.env`。无需 clone 源码，真实密钥不会进入仓库或镜像。
 
 ### Windows PowerShell
 
@@ -41,8 +43,11 @@
 Invoke-WebRequest -UseBasicParsing `
   -Uri "https://raw.githubusercontent.com/AnnoyingVillager/epay-test-gateway/main/docker-compose.yml" `
   -OutFile "docker-compose.yml"
+Invoke-WebRequest -UseBasicParsing `
+  -Uri "https://raw.githubusercontent.com/AnnoyingVillager/epay-test-gateway/main/.env.example" `
+  -OutFile ".env"
 
-notepad .\docker-compose.yml
+notepad .\.env
 docker compose up -d
 ```
 
@@ -52,12 +57,15 @@ docker compose up -d
 curl -fsSL \
   https://raw.githubusercontent.com/AnnoyingVillager/epay-test-gateway/main/docker-compose.yml \
   -o docker-compose.yml
+curl -fsSL \
+  https://raw.githubusercontent.com/AnnoyingVillager/epay-test-gateway/main/.env.example \
+  -o .env
 
-nano docker-compose.yml
+nano .env
 docker compose up -d
 ```
 
-启动前至少修改 `docker-compose.yml` 中的：
+启动前至少修改本地 `.env` 中的：
 
 - `ADMIN_PASSWORD`：管理员密码
 - `APP_SECRET`：64 位随机十六进制字符串
@@ -73,7 +81,7 @@ docker compose up -d
 
 初始管理员账号为 `admin`，首次启动时密码来自 `ADMIN_PASSWORD`。之后可在“用户”页面创建普通用户或其他管理员。
 
-生成 `APP_SECRET`：
+`.env` 已被 Git 和 Docker 构建上下文排除，不要提交真实密钥。生成 `APP_SECRET`：
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
@@ -129,7 +137,7 @@ docker run -d \
 1. 使用 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 登录管理面板。
 2. 打开 **卡 BIN**，创建例如 `424242`、长度 16 的测试 BIN。
 3. 打开 **用户**，创建普通用户账号，或让管理员直接创建卡片并指定所属用户。
-4. 普通用户登录后打开 **虚拟卡 → 创建虚拟卡**；初始余额固定为 0，并设置 3DS 密码。
+4. 普通用户登录后打开 **虚拟卡 → 创建虚拟卡**；卡片初始余额为分组赠金，3DS 是否启用由 BIN 决定。
 5. 用 `/api.php` 或 `/submit.php` 发起订单。
 6. 如果传入 `bind_card=CARD-...`，支付页直接显示指定卡片。
 7. 如果未传 `bind_card`，支付页会提示登录后选卡，或输入卡号、有效期和 CVV 绑卡。
@@ -141,7 +149,7 @@ docker run -d \
 | 功能 | 管理员 | 普通用户 |
 | --- | --- | --- |
 | 创建卡 BIN | 是 | 否 |
-| 创建虚拟卡 | 是，可指定所属用户和初始余额 | 是，只能创建到自己的账号且初始余额固定为 0 |
+| 创建虚拟卡 | 是，可指定所属用户和初始余额 | 是，只能创建到自己的账号并按分组发放赠金 |
 | 查看虚拟卡 | 全部 | 仅自己的卡片 |
 | 修改余额、3DS、CVV、状态 | 是 | 否 |
 | 删除虚拟卡 | 是，仅余额为 0 且无进行中订单 | 否 |
@@ -149,7 +157,9 @@ docker run -d \
 | 手工消费 | 是 | 否 |
 | 绑卡支付消费 | 是 | 是，只能选择自己的卡片 |
 | 查看订单 | 全部 | 仅自己卡片关联的订单 |
-| 用户、商户、系统设置 | 是 | 否 |
+| 用户、分组、商户、系统设置 | 是 | 否 |
+| 账户余额充提 | 是 | 是，受后台费率和限额约束 |
+| 邀请注册 | 是 | 有邀请权限时可用 |
 
 管理员不能停用当前账号，也不能移除最后一个启用的管理员。
 
@@ -310,7 +320,7 @@ sign_type=MD5
 
 ### 模拟拒付 / 退单
 
-已支付订单可在订单详情中点击“模拟拒付 / 退单”，金额会退回虚拟卡。回调额外包含：
+信用卡和账户余额支付的订单可在担保期内通过商户后台或 `act=refund` API 发起退款，金额按原渠道退回。全额退款后订单状态为 `CHARGEBACK`，回调额外包含：
 
 ```text
 trade_status=TRADE_CLOSED
@@ -329,7 +339,7 @@ errcode=CHARGEBACK
 - 卡内余额不足
 - 卡片有效期已过
 - 订单超过 `timeout` / `expires_in` 时间
-- 已支付订单手动模拟拒付/退单
+- 信用卡担保期内退款；借记卡即时结算后不可退款
 
 ## 管理面板概览
 
@@ -337,9 +347,11 @@ errcode=CHARGEBACK
 - **虚拟卡**：完整测试卡号、CVV、3DS 密码、余额、状态、所属用户、卡片流水；余额为 0 且无进行中订单时可删除
 - **卡 BIN**：仅管理员可创建、维护和删除无卡 BIN，包括 BIN 前缀、品牌、卡类型、国家、卡号长度
 - **订单**：管理员查看全部订单，普通用户仅查看自己卡片关联的订单
-- **用户**：创建管理员/普通用户、启停、重置密码、调整角色
-- **商户**：PID、MD5 密钥、启停、密钥轮换
-- **设置**：站点名称、默认超时、结算货币、支付类型、支付页绑卡、3DS 验证、自动成功模式
+- **用户**：UID 搜索、批量分组/加减余额/禁用、账户与卡片风控、消费限额、超级风控与归档删除
+- **账户/邀请**：账户余额与卡片互转、分组赠金、邀请码更换与名额购买
+- **分组**：Default/VIP/SVIP 开卡上限、开卡赠金、消费限额和 BIN 权限
+- **商户**：PID、MD5 密钥、余额、佣金、账单详情、退款、启停和密钥轮换
+- **设置**：站点、超时、结算货币、支付类型、注册/邀请/邮箱规则、SMTP、充提费率、担保时间、自动成功模式；3DS 在卡 BIN 中配置
 
 ## 环境变量
 
@@ -352,10 +364,10 @@ errcode=CHARGEBACK
 | `ADMIN_USERNAME` | `admin` | 首次启动时创建的初始管理员账号 |
 | `ADMIN_PASSWORD` | `change-me-now` | 首次启动时创建的初始管理员密码，必须修改 |
 | `ADMIN_SESSION_HOURS` | `12` | 管理会话有效期 |
-| `APP_SECRET` | 开发回退值 | 会话与卡片数据加密密钥，生产必须设置 |
+| `APP_SECRET` | 无（Compose 强制要求） | 会话与卡片数据加密密钥，必须在 `.env` 中设置且升级时保持不变 |
 | `DEFAULT_MERCHANT_PID` | `1001` | 首次启动创建的商户 PID |
 | `DEFAULT_MERCHANT_NAME` | `Demo Merchant` | 首次启动创建的商户名称 |
-| `DEFAULT_MERCHANT_KEY` | `test-merchant-key-change-me` | 首次启动创建的商户密钥 |
+| `DEFAULT_MERCHANT_KEY` | 无（Compose 强制要求） | 首次启动创建的商户密钥，必须在 `.env` 中设置 |
 | `ORDER_TIMEOUT_SECONDS` | `900` | 默认订单超时 |
 | `NOTIFY_RETRY_COUNT` | `3` | 回调额外重试次数 |
 | `NOTIFY_TIMEOUT_MS` | `8000` | 单次回调 HTTP 超时 |
@@ -392,7 +404,7 @@ npm test
 
 ## 发布到 GitHub 与 Docker 镜像
 
-仓库已包含 `.github/workflows/docker.yml`。推送 `main` 分支会构建并推送 `ghcr.io/<owner>/<repo>:latest`；推送 `v1.2.5` 这类标签会额外生成版本标签。
+仓库已包含 `.github/workflows/docker.yml`。推送 `main` 分支会构建并推送 `ghcr.io/<owner>/<repo>:latest`；推送 `v2.0.0` 这类标签会额外生成版本标签。
 
 ```bash
 git init -b main
@@ -400,8 +412,8 @@ git add .
 git commit -m "feat: add Epay test gateway"
 gh auth login
 gh repo create epay-test-gateway --public --source=. --remote=origin --push
-git tag v1.2.5
-git push origin v1.2.5
+git tag v2.0.0
+git push origin v2.0.0
 ```
 
 首次使用 GHCR 时，Actions 使用仓库的 `GITHUB_TOKEN` 推送。部署机器拉取公开镜像：
@@ -415,7 +427,8 @@ docker pull ghcr.io/<owner>/epay-test-gateway:latest
 ## 安全说明
 
 - 此项目故意展示和修改测试虚拟卡信息。不要用于真实银行卡。
-- 修改默认管理员密码、`APP_SECRET` 和商户密钥。
+- 修改默认管理员密码、`APP_SECRET` 和商户密钥，并将它们保存在被忽略的本地 `.env` 中。
+- 不要将 `.env`、真实密钥或包含密钥的 Compose 文件提交到 Git。若密钥曾公开，必须视为已经泄露：商户密钥可在管理后台轮换；`APP_SECRET` 不要直接替换，应先备份数据库并迁移已有加密卡片和 SMTP 凭据，或重建测试环境。
 - 对外暴露时使用 HTTPS 反向代理，并设置 `COOKIE_SECURE=true`、`TRUST_PROXY=true`。
 - 为管理面板增加网络访问限制或 VPN。
 - 卡片号、CVV 和 3DS 密码使用 AES-256-GCM 加密后存储；卡号另以密钥化哈希建立查询索引，加密密钥从 `APP_SECRET` 派生。
@@ -427,6 +440,14 @@ docker pull ghcr.io/<owner>/epay-test-gateway:latest
 ## 兼容性说明
 
 本项目实现的是常见“彩虹易支付”风格的自建 Epay 接口约定，包括 `pid`、`type`、`out_trade_no`、`notify_url`、`return_url`、`name`、`money`、MD5 签名、`trade_status=TRADE_SUCCESS` 与商户返回 `success`。不同 Epay 服务商对失败回调、退款/拒付字段可能有差异，详见 [API 文档](docs/EPAY_API.md)。
+
+### 从 v1 升级到 v2
+
+- v2 会在启动时自动为旧 SQLite 数据库补充新表和新字段；升级前仍建议备份 `epay.db`。
+- 旧版全局 3DS 设置会在首次迁移时复制到已有 BIN，之后按 BIN 独立管理。
+- 普通用户的已加密卡片数据和订单历史会保留。
+- 旧订单没有结算模式快照时按历史订单展示；新支付按借记卡即时结算、信用卡担保结算执行。
+- 若必须继续使用旧行为，可固定旧镜像标签 `1.2.5`；`main` 分支从 v2 开始。
 
 ## License
 

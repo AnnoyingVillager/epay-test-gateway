@@ -6,7 +6,7 @@ if (config.adminPasswordIsDefault) {
   console.warn('[security] ADMIN_PASSWORD is using the default value. Change it before exposing this service.');
 }
 if (config.appSecretGenerated) {
-  console.warn('[security] APP_SECRET is not set. Encrypted card data will become unreadable after restart. Set APP_SECRET.');
+  console.warn('[security] APP_SECRET is not set. Encrypted card data and SMTP credentials will become unreadable after restart. Set APP_SECRET.');
 }
 
 const { app, close } = createApp({ config });

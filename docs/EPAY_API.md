@@ -10,6 +10,9 @@
 | GET | `/pay/:tradeNo` | 支付页；未绑卡时显示绑卡页面 |
 | POST | `/pay/:tradeNo/login` | 绑卡前登录账号 |
 | POST | `/pay/:tradeNo/bind` | 使用卡号、有效期和 CVV 绑定卡片到订单 |
+| POST | `/pay/:tradeNo/account` | 登录后使用账户余额支付 |
+| GET | `/pay/:tradeNo/status` | 轮询订单状态 |
+| POST | `/api.php?act=refund` | 发起担保期内退款 |
 | GET | `/healthz` | 健康检查 |
 
 ## 订单字段
@@ -114,13 +117,13 @@ HTTP 状态通常保持 `200`，便于兼容只解析 JSON 的 Epay 客户端。
 订单已预绑定卡片时只展示该卡。未绑定时，用户可以登录并选择自己名下的卡，也可以输入卡号、`MM/YY` 有效期和 CVV。卡号、有效期或 CVV 不匹配时不会绑定。绑定完成后，页面只接受该卡。确认支付时按顺序校验：
 
 1. 订单仍为 `PENDING` 且未过期
-2. 虚拟卡存在
-3. 卡片状态为 `active`
-4. 卡有效期未过
-5. 如果后台开启 3DS，则 3DS 密码正确
-6. 卡片余额大于等于订单金额
+2. 虚拟卡存在，所属账号启用且未被风控阻断
+3. 卡 BIN 仍启用，且当前用户分组仍有该 BIN 权限
+4. 卡片状态为 `active`，有效期未过，币种与订单一致
+5. 该卡所属 BIN 开启 3DS 时，3DS 密码正确
+6. 卡片余额大于等于订单金额，且未超过账号消费限额
 
-3DS 密码错误不会关闭订单，用户可以再次输入。后台关闭 3DS 后，支付确认请求无需携带 `pin`。余额不足、卡拒付、卡过期和订单超时会将订单置为终止状态。
+3DS 密码错误不会关闭订单，用户可以再次输入。对应 BIN 关闭 3DS 后，支付确认请求无需携带 `pin`。余额不足、卡拒付、卡过期、BIN 停用、分组权限撤销和订单超时会将订单置为终止状态。
 
 支付页默认使用 AJAX 提交确认请求，并附带请求头 `X-Payment-Ajax: 1`。成功时网关返回包含 `redirectUrl` 的 JSON，页面先显示“订单已完成”，随后自动跳转商户 `return_url`。如果 JavaScript 不可用，同一个端点仍会返回标准 `303` 跳转。
 
@@ -190,18 +193,36 @@ errcode=ORDER_EXPIRED
 
 这些字段同样参与签名。
 
-## 模拟拒付 / 退单
+## 退款
 
-后台订单详情可以模拟拒付。支付金额会退回卡片，订单状态变为 `CHARGEBACK`，回调增加：
+借记卡订单采用即时结算，支付成功后不可退款。信用卡和账户余额订单进入担保期，默认 300 秒，可通过系统设置调整。担保期内可调用：
+
+```http
+POST /api.php
+act=refund
+pid=1001
+trade_no=T20261106120000A1B2C3D4E5
+out_refund_no=REFUND-001
+money=10.00
+reason=test-refund
+sign=<MD5>
+sign_type=MD5
+```
+
+`money` 可省略表示退款剩余全部金额。同一 `out_refund_no` 重试会返回原退款单；如果同一退款单号用于其他订单或不同金额，返回 `IDEMPOTENCY_CONFLICT`。GET 请求不能发起退款。
+
+退款金额按原渠道返回虚拟卡或账户余额。部分退款后订单保持 `PAID`；全额退款后变为 `CHARGEBACK`，并发送带以下字段的签名回调：
 
 ```text
 trade_status=TRADE_CLOSED
 refund_status=REFUND_SUCCESS
+refund_no=R...
+refund_money=10.00
 errcode=CHARGEBACK
-errmsg=Simulated chargeback
+errmsg=Full refund completed
 ```
 
-这是一个测试扩展。真实 Epay 服务的退款/拒付通知格式可能不同。
+商户后台的账单详情页也可以发起全额或指定金额退款。
 
 ## 支付页超时
 
@@ -211,6 +232,7 @@ errmsg=Simulated chargeback
 
 - 同一商户下重复且未过期的 `out_trade_no` 会返回原订单。
 - 已支付订单再次确认不会重复扣款。
+- 退款请求应携带稳定的 `out_refund_no`；相同请求重复提交不会重复入账。
 - 回调重发不会改变订单金额或卡片余额。
 
 ## 限制

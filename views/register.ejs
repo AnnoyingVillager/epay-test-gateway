@@ -1,0 +1,38 @@
+<%- include('partials/head', { bodyClass: 'login-page' }) %>
+<main class="login-shell">
+  <section class="login-panel">
+    <div class="login-brand"><span class="brand-mark">E</span><span><strong>Epay</strong><small>Test Gateway</small></span></div>
+    <p class="eyebrow">CREATE ACCOUNT</p>
+    <h1>注册账号</h1>
+    <% if (!registrationEnabled) { %>
+      <div class="alert alert-warning">当前未开放注册，请联系管理员。</div>
+      <a class="button button-ghost button-block" href="/admin/login">返回登录</a>
+    <% } else { %>
+      <% if (error) { %><div class="alert alert-danger"><%= error %></div><% } %>
+      <% if (message) { %><div class="alert alert-info"><%= message %></div><% } %>
+      <form method="post" action="/register" class="stack-form" data-register-form>
+        <label class="field"><span>用户名</span><input name="username" value="<%= form.username || '' %>" autocomplete="username" required></label>
+        <p class="form-hint">默认规则：4-20 位字母与数字，首位必须是字母。</p>
+        <label class="field"><span>密码</span><input type="password" name="password" autocomplete="new-password" required></label>
+        <p class="form-hint">默认规则：8-24 位，必须同时包含字母与数字。</p>
+        <label class="field"><span>邮箱<% if (!requireEmail) { %>（可选）<% } %></span><input type="text" name="email" value="<%= form.email || '' %>" maxlength="255" autocomplete="email" <%= requireEmail ? 'required' : '' %>></label>
+        <% if (requireEmail) { %>
+          <div class="form-row">
+            <label class="field"><span>邮箱验证码</span><input name="email_code" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" required></label>
+            <label class="field"><span>&nbsp;</span><button class="button button-ghost button-block" type="button" data-send-code>发送验证码</button></label>
+          </div>
+          <p class="form-hint" data-code-status></p>
+        <% } %>
+        <label class="field"><span>邀请码<% if (!requireInvite) { %>（可选）<% } %></span><input name="invite_code" value="<%= inviteCode %>" maxlength="20" <%= requireInvite ? 'required' : '' %>></label>
+        <button class="button button-primary button-block" type="submit">注册并登录</button>
+      </form>
+      <p class="login-hint">已有账号？<a class="text-link" href="/admin/login">返回登录</a></p>
+    <% } %>
+  </section>
+  <aside class="login-aside">
+    <div class="login-aside-copy"><span class="status-dot">INVITE READY</span><h2>独立 UID、账户余额与邀请关系。</h2><ul><li>用户名、密码和邮箱规则由管理员配置</li><li>支持邮箱白名单/黑名单</li><li>邀请注册会记录邀请人与被邀请人 UID</li><li>注册后自动登录账户中心</li></ul></div>
+  </aside>
+</main>
+<script src="/js/register.js?v=<%= assetVersion %>" defer></script>
+</body>
+</html>

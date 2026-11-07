@@ -6,14 +6,8 @@
     <div class="stack-list">
       <% merchants.forEach((merchant) => { %>
       <article class="list-card merchant-card">
-        <div class="list-card-main">
-          <div class="merchant-avatar"><%= merchant.name.slice(0, 1).toUpperCase() %></div>
-          <div>
-            <strong><%= merchant.name %></strong>
-            <p>PID <code><%= merchant.pid %></code> · 创建于 <%= formatDateTime(merchant.createdAt) %></p>
-          </div>
-        </div>
-        <div class="list-card-side"><span class="pill <%= merchant.isActive ? 'pill-success' : 'pill-muted' %>"><%= merchant.isActive ? '启用' : '停用' %></span></div>
+        <div class="list-card-main"><div class="merchant-avatar"><%= merchant.name.slice(0, 1).toUpperCase() %></div><div><strong><%= merchant.name %></strong><p>PID <code><%= merchant.pid %></code> · 余额 <%= formatMinor(merchant.balanceMinor) %> CNY · 佣金 <%= merchant.commissionBps %> bps</p></div></div>
+        <div class="list-card-side"><% if (merchant.isDefault) { %><span class="pill pill-success">默认商户</span><% } %><span class="pill <%= merchant.isActive ? 'pill-success' : 'pill-muted' %>"><%= merchant.isActive ? '启用' : '停用' %></span><a class="button button-ghost button-small" href="/admin/merchants/<%= merchant.id %>">账单详情</a></div>
         <div class="secret-row"><span>MD5 密钥</span><code class="break-all"><%= merchant.key %></code><button type="button" class="copy-button" data-copy="<%= merchant.key %>">复制</button></div>
         <details class="inline-details">
           <summary>管理与轮换</summary>
@@ -21,20 +15,20 @@
             <form method="post" action="/admin/merchants/<%= merchant.id %>/update" class="form-grid compact-grid">
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
               <label class="field"><span>商户名称</span><input name="name" value="<%= merchant.name %>" required></label>
+              <label class="field"><span>消费佣金（bps）</span><input type="number" name="commission_bps" min="0" max="10000" value="<%= merchant.commissionBps %>" required></label>
               <label class="field checkbox-field"><input type="checkbox" name="is_active" value="1" <%= merchant.isActive ? 'checked' : '' %>><span>启用商户</span></label>
               <div class="form-actions"><button class="button button-primary button-small" type="submit">保存</button></div>
             </form>
-            <form method="post" action="/admin/merchants/<%= merchant.id %>/rotate" data-confirm="轮换后旧密钥立即失效，确认继续？" class="rotate-form">
-              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-              <button class="button button-danger button-small" type="submit">轮换密钥</button>
-            </form>
+            <div class="button-row">
+              <form method="post" action="/admin/merchants/<%= merchant.id %>/rotate" data-confirm="轮换后旧密钥立即失效，确认继续？"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-danger button-small" type="submit">轮换密钥</button></form>
+              <% if (!merchant.isDefault) { %><form method="post" action="/admin/merchants/<%= merchant.id %>/delete" data-confirm="仅余额为 0 且无进行中/待结算订单的商户可删除，确认继续？"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-danger button-small" type="submit">删除商户</button></form><% } %>
+            </div>
           </div>
         </details>
       </article>
       <% }) %>
     </div>
   </section>
-
   <aside class="panel sticky-panel">
     <div class="panel-head"><div><p class="eyebrow">NEW MERCHANT</p><h2>创建商户</h2></div></div>
     <form method="post" action="/admin/merchants" class="stack-form">
@@ -43,7 +37,7 @@
       <label class="field"><span>商户名称</span><input name="name" required placeholder="例如：测试商城"></label>
       <label class="field"><span>MD5 密钥</span><input name="key" minlength="8" placeholder="留空自动生成"></label>
       <button class="button button-primary button-block" type="submit">创建商户</button>
-      <p class="form-hint">商户下单时必须使用 PID 与密钥计算 Epay MD5 签名。</p>
+      <p class="form-hint">商户下单时必须使用 PID 与密钥计算 Epay MD5 签名。商户佣金默认 0。</p>
     </form>
   </aside>
 </div>

@@ -7,38 +7,32 @@
       <div class="empty-state"><strong>还没有卡 BIN</strong><p>先在右侧创建一个 BIN，才能生成虚拟卡。</p></div>
     <% } else { %>
       <div class="stack-list">
-      <% bins.forEach((bin) => { %>
+      <% bins.forEach((bin) => { const assigned = String(bin.group_ids || '').split(','); %>
         <article class="list-card">
           <div class="list-card-main">
             <div class="bin-badge"><%= bin.brand %></div>
-            <div>
-              <strong><%= bin.name %></strong>
-              <p><code><%= bin.prefix %></code> · <%= bin.number_length %> 位 · <%= bin.card_type %> · <%= bin.country %></p>
-            </div>
+            <div><strong><%= bin.name %></strong><p><code><%= bin.prefix %></code> · <%= bin.number_length %> 位 · <%= bin.card_type %> · <%= bin.country %> · 3DS <%= bin.require_3ds ? '开启' : '关闭' %></p></div>
           </div>
           <div class="list-card-side">
             <span class="pill <%= bin.is_active ? 'pill-success' : 'pill-muted' %>"><%= bin.is_active ? '启用' : '停用' %></span>
             <span><%= bin.card_count %> 张卡</span>
             <% if (bin.card_count === 0) { %>
-              <form method="post" action="/admin/bins/<%= bin.id %>/delete" data-confirm="确认删除该卡 BIN？">
-                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                <button class="button button-danger button-small" type="submit">删除</button>
-              </form>
-            <% } else { %>
-              <span class="form-hint">含卡不可删除</span>
-            <% } %>
+              <form method="post" action="/admin/bins/<%= bin.id %>/delete" data-confirm="确认删除该卡 BIN？"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="group_ids_present" value="1"><button class="button button-danger button-small" type="submit">删除</button></form>
+            <% } else { %><span class="form-hint">含卡不可删除</span><% } %>
           </div>
           <details class="inline-details">
             <summary>编辑 BIN</summary>
             <form method="post" action="/admin/bins/<%= bin.id %>/update" class="form-grid compact-grid">
-              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="group_ids_present" value="1">
               <label class="field"><span>名称</span><input name="name" value="<%= bin.name %>" required></label>
               <label class="field"><span>BIN 前缀</span><input name="prefix" value="<%= bin.prefix %>" pattern="\d{4,8}" required></label>
               <label class="field"><span>品牌</span><input name="brand" value="<%= bin.brand %>" required></label>
-              <label class="field"><span>卡类型</span><select name="card_type"><option value="debit" <%= bin.card_type === 'debit' ? 'selected' : '' %>>借记卡</option><option value="credit" <%= bin.card_type === 'credit' ? 'selected' : '' %>>信用卡</option></select></label>
+              <label class="field"><span>卡类型</span><select name="card_type"><option value="debit" <%= bin.card_type === 'debit' ? 'selected' : '' %>>借记卡（即时结算）</option><option value="credit" <%= bin.card_type === 'credit' ? 'selected' : '' %>>信用卡（担保结算）</option></select></label>
               <label class="field"><span>国家</span><input name="country" value="<%= bin.country %>" maxlength="2" required></label>
               <label class="field"><span>卡号长度</span><input type="number" name="number_length" min="12" max="19" value="<%= bin.number_length %>" required></label>
-              <label class="field checkbox-field"><input type="checkbox" name="is_active" value="1" <%= bin.is_active ? 'checked' : '' %>><span>启用该 BIN</span></label>
+              <label class="field"><span>3DS 验证</span><select name="require_3ds"><option value="0" <%= bin.require_3ds ? '' : 'selected' %>>关闭</option><option value="1" <%= bin.require_3ds ? 'selected' : '' %>>开启</option></select></label>
+              <label class="field"><span>状态</span><select name="is_active"><option value="0" <%= bin.is_active ? '' : 'selected' %>>停用</option><option value="1" <%= bin.is_active ? 'selected' : '' %>>启用</option></select></label>
+              <div class="field field-span-2"><span>可用用户分组</span><div class="button-row"><% groups.forEach((group) => { %><label class="checkbox-field"><input type="checkbox" name="group_ids" value="<%= group.id %>" <%= assigned.includes(String(group.id)) ? 'checked' : '' %>><span><%= group.name %></span></label><% }) %></div></div>
               <div class="form-actions"><button class="button button-primary button-small" type="submit">保存修改</button></div>
             </form>
           </details>
@@ -51,17 +45,13 @@
   <aside class="panel sticky-panel">
     <div class="panel-head"><div><p class="eyebrow">NEW BIN</p><h2>创建卡 BIN</h2></div></div>
     <form method="post" action="/admin/bins" class="stack-form">
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="group_ids_present" value="1">
       <label class="field"><span>BIN 名称</span><input name="name" required placeholder="例如：测试 Visa"></label>
       <label class="field"><span>BIN 前缀</span><input name="prefix" inputmode="numeric" pattern="\d{4,8}" required placeholder="例如：424242"></label>
-      <div class="form-row">
-        <label class="field"><span>卡品牌</span><input name="brand" value="Visa" required></label>
-        <label class="field"><span>卡号长度</span><input type="number" name="number_length" min="12" max="19" value="16" required></label>
-      </div>
-      <div class="form-row">
-        <label class="field"><span>卡类型</span><select name="card_type"><option value="debit">借记卡</option><option value="credit">信用卡</option></select></label>
-        <label class="field"><span>国家代码</span><input name="country" value="CN" maxlength="2" required></label>
-      </div>
+      <div class="form-row"><label class="field"><span>卡品牌</span><input name="brand" value="Visa" required></label><label class="field"><span>卡号长度</span><input type="number" name="number_length" min="12" max="19" value="16" required></label></div>
+      <div class="form-row"><label class="field"><span>卡类型</span><select name="card_type"><option value="debit">借记卡（即时结算）</option><option value="credit">信用卡（担保结算）</option></select></label><label class="field"><span>国家代码</span><input name="country" value="CN" maxlength="2" required></label></div>
+      <label class="field"><span>3DS 验证</span><select name="require_3ds"><option value="0">关闭</option><option value="1" selected>开启</option></select></label>
+      <div class="field"><span>可用用户分组</span><div class="button-row"><% groups.forEach((group) => { %><label class="checkbox-field"><input type="checkbox" name="group_ids" value="<%= group.id %>" <%= group.name === 'Default' ? 'checked' : '' %>><span><%= group.name %></span></label><% }) %></div></div>
       <button class="button button-primary button-block" type="submit">创建 BIN</button>
       <p class="form-hint">虚拟卡号会使用该前缀生成，并通过 Luhn 校验。</p>
     </form>

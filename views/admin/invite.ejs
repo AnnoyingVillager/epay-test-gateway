@@ -1,0 +1,41 @@
+<%- include('../partials/head', { bodyClass: 'admin-page' }) %>
+<%- include('../partials/admin-start') %>
+<div class="detail-grid">
+  <section class="panel">
+    <div class="panel-head"><div><p class="eyebrow">MY INVITE</p><h2>邀请码与链接</h2></div><span class="pill <%= enabled ? 'pill-success' : 'pill-muted' %>"><%= enabled ? '可邀请' : '无邀请权限' %></span></div>
+    <div class="card-info-grid">
+      <div><span>邀请码</span><code><%= user.inviteCode %></code><button type="button" class="copy-button" data-copy="<%= user.inviteCode %>">复制</button></div>
+      <div><span>邀请链接</span><code><%= inviteLink %></code><button type="button" class="copy-button" data-copy="<%= inviteLink %>">复制</button></div>
+      <div><span>邀请进度</span><code><%= user.invitedCount %> / <%= user.inviteLimit %></code></div>
+      <div><span>邀请人</span><code><%= topology.inviter ? `${topology.inviter.username} (UID ${topology.inviter.uid})` : '无' %></code></div>
+    </div>
+    <% if (enabled) { %>
+      <div class="button-row">
+        <form method="post" action="/admin/invite/random" data-confirm="更换后旧邀请链接立即失效，确认继续？"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-ghost" type="submit">免费随机换码</button></form>
+      </div>
+      <hr class="divider">
+      <form method="post" action="/admin/invite/custom" class="form-row">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <label class="field"><span>自定义邀请码</span><input name="code" minlength="6" maxlength="20" pattern="[A-Za-z0-9]{6,20}" required></label>
+        <div class="form-actions"><button class="button button-primary" type="submit"><%= user.role === 'admin' ? '免费更换' : `付费更换（${formatMinor(settings.invite_custom_fee_minor)} CNY）` %></button></div>
+      </form>
+      <% if (settings.invite_slot_purchase_enabled === '1') { %>
+        <hr class="divider">
+        <form method="post" action="/admin/invite/slots" class="form-row">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <label class="field"><span>购买邀请名额</span><input type="number" name="quantity" min="1" max="100" value="1" required></label>
+          <div class="form-actions"><button class="button button-ghost" type="submit">购买名额</button></div>
+        </form>
+      <% } %>
+    <% } %>
+  </section>
+  <section class="panel">
+    <div class="panel-head"><div><p class="eyebrow">TOPOLOGY</p><h2>邀请关系</h2></div></div>
+    <p class="form-hint">邀请码规则：默认 8 位区分大小写字母数字；自定义 6-20 位，7 位及以下不能包含数字。</p>
+    <h3>已邀请用户</h3>
+    <% if (!topology.invitees.length) { %><div class="empty-state compact">暂无邀请用户。</div><% } else { %><div class="table-wrap"><table><thead><tr><th>UID</th><th>用户名</th><th>状态</th><th>注册时间</th></tr></thead><tbody><% topology.invitees.forEach((item) => { %><tr><td><code><%= item.uid %></code></td><td><%= item.username %></td><td><%= item.is_active ? '启用' : '禁用' %></td><td><%= formatDateTime(item.created_at) %></td></tr><% }) %></tbody></table></div><% } %>
+    <h3>已删除邀请用户</h3>
+    <% if (!topology.deletedInvitees.length) { %><div class="empty-state compact">暂无已删除邀请用户。</div><% } else { %><div class="table-wrap"><table><thead><tr><th>UID</th><th>用户名</th><th>删除时间</th></tr></thead><tbody><% topology.deletedInvitees.forEach((item) => { %><tr><td><code><%= item.uid %></code></td><td><%= item.username %></td><td><%= formatDateTime(item.deleted_at) %></td></tr><% }) %></tbody></table></div><% } %>
+  </section>
+</div>
+<%- include('../partials/admin-end') %>

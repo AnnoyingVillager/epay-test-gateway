@@ -13,6 +13,12 @@
       <div><dt>创建时间</dt><dd><%= formatDateTime(order.createdAt) %></dd></div>
       <div><dt>超时时间</dt><dd><%= formatDateTime(order.expiresAt) %></dd></div>
       <div><dt>支付时间</dt><dd><%= order.paidAt ? formatDateTime(order.paidAt) : '-' %></dd></div>
+      <div><dt>付款用户</dt><dd><%= order.payerUsername ? `${order.payerUsername} (UID ${order.payerUid})` : '-' %></dd></div>
+      <div><dt>支付方式</dt><dd><%= order.paymentMethod || 'card' %><%= order.cardTypeSnapshot ? ` / ${order.cardTypeSnapshot}` : '' %></dd></div>
+      <div><dt>结算模式</dt><dd><%= order.settlementMode || '-' %></dd></div>
+      <div><dt>结算时间</dt><dd><%= order.settledAt ? formatDateTime(order.settledAt) : (order.settlementDueAt ? `担保至 ${formatDateTime(order.settlementDueAt)}` : '-') %></dd></div>
+      <div><dt>佣金 / 净额</dt><dd><%= formatMinor(order.commissionMinor) %> / <%= formatMinor(order.merchantNetMinor) %></dd></div>
+      <div><dt>已退款</dt><dd><%= formatMinor(order.refundedMinor) %></dd></div>
       <div><dt>客户端 IP</dt><dd><code><%= order.clientIp || '-' %></code></dd></div>
       <div><dt>创建入口</dt><dd><%= order.createdVia %></dd></div>
     </dl>
@@ -22,7 +28,7 @@
     <div class="button-row">
       <% if (isAdmin) { %>
         <form method="post" action="/admin/orders/<%= order.id %>/resend"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-ghost" type="submit">重新发送回调</button></form>
-        <% if (order.status === 'PAID') { %><form method="post" action="/admin/orders/<%= order.id %>/chargeback" data-confirm="确认模拟拒付/退单？金额将退回虚拟卡。"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-danger" type="submit">模拟拒付 / 退单</button></form><% } %>
+        <% if (order.refundable) { %><form method="post" action="/admin/orders/<%= order.id %>/chargeback" data-confirm="确认发起全额退款？金额将原路返回。"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-danger" type="submit">发起退款</button></form><% } %>
       <% } %>
       <a class="button button-ghost" href="/pay/<%= encodeURIComponent(order.tradeNo) %>" target="_blank" rel="noopener">查看支付页</a>
     </div>

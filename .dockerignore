@@ -8,3 +8,6 @@ coverage
 test
 tests
 *.md
+docker-compose*.yml
+.env.*
+.github

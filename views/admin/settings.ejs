@@ -1,39 +1,66 @@
 <%- include('../partials/head', { bodyClass: 'admin-page' }) %>
 <%- include('../partials/admin-start') %>
-<div class="detail-grid settings-grid">
-  <section class="panel">
-    <div class="panel-head"><div><p class="eyebrow">GATEWAY SETTINGS</p><h2>支付设置</h2></div></div>
-    <form method="post" action="/admin/settings" class="stack-form">
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<form method="post" action="/admin/settings" class="stack-form">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <div class="detail-grid settings-grid">
+    <section class="panel">
+      <div class="panel-head"><div><p class="eyebrow">GATEWAY SETTINGS</p><h2>基础支付设置</h2></div></div>
       <label class="field"><span>站点名称</span><input name="site_name" value="<%= settings.site_name %>" maxlength="80" required></label>
-      <div class="form-row">
-        <label class="field"><span>默认订单超时（秒）</span><input type="number" name="order_timeout_seconds" min="60" max="86400" value="<%= settings.order_timeout_seconds %>" required></label>
-        <label class="field"><span>默认结算货币</span><input name="default_currency" value="<%= settings.default_currency %>" maxlength="3" pattern="[A-Za-z]{3}" required></label>
-      </div>
-      <label class="field"><span>支持的支付类型</span><input name="supported_types" value="<%= settings.supported_types %>" required placeholder="alipay,wxpay,qqpay"></label>
-      <label class="field checkbox-field"><input type="checkbox" name="require_card_binding" value="1" <%= settings.require_card_binding === '1' ? 'checked' : '' %>><span>未绑卡订单允许在支付页绑定虚拟卡</span></label>
-      <label class="field checkbox-field"><input type="checkbox" name="require_3ds" value="1" <%= settings.require_3ds === '1' ? 'checked' : '' %>><span>支付时开启 3DS 密码验证</span></label>
-      <p class="form-hint">关闭 3DS 后，支付确认页不再要求输入 3DS 密码，绑定有效卡号、有效期和 CVV 后可直接支付。</p>
+      <div class="form-row"><label class="field"><span>默认订单超时（秒）</span><input type="number" name="order_timeout_seconds" min="60" max="86400" value="<%= settings.order_timeout_seconds %>" required></label><label class="field"><span>默认结算货币</span><input name="default_currency" value="<%= settings.default_currency %>" maxlength="3" pattern="[A-Za-z]{3}" required></label></div>
+      <label class="field"><span>支持的支付类型</span><input name="supported_types" value="<%= settings.supported_types %>" required></label>
+      <label class="field checkbox-field"><input type="checkbox" name="require_card_binding" value="1" <%= settings.require_card_binding === '1' ? 'checked' : '' %>><span>未绑卡订单允许在支付页绑定虚拟卡或使用账户余额</span></label>
       <label class="field checkbox-field"><input type="checkbox" name="auto_success_payments" value="1" <%= settings.auto_success_payments === '1' ? 'checked' : '' %>><span>所有传入的支付请求直接返回成功</span></label>
-      <div class="alert alert-warning"><strong>自动成功模式：</strong>开启后会跳过绑卡、3DS、余额和拒付检查，订单立即标记为已完成并触发异步回调。仅用于测试。</div>
-      <div class="form-actions"><button class="button button-primary" type="submit">保存系统设置</button></div>
-    </form>
-    <p class="form-hint">商户也可通过订单参数 <code>timeout</code> 或 <code>expires_in</code> 覆盖超时时间，范围 60-86400 秒。该参数需要参与签名。</p>
+      <div class="alert alert-warning"><strong>自动成功模式：</strong>会跳过绑卡、3DS、余额、风控和拒付检查，订单立即完成并触发异步回调。仅用于测试。</div>
+      <label class="field"><span>信用卡结算担保时间（秒）</span><input type="number" name="merchant_guarantee_seconds" min="60" max="86400" value="<%= settings.merchant_guarantee_seconds %>" required></label>
+      <p class="form-hint">3DS 开关已移动到卡 BIN 管理，每个 BIN 可独立配置。</p>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><div><p class="eyebrow">REGISTRATION</p><h2>注册与验证规则</h2></div></div>
+      <label class="field checkbox-field"><input type="checkbox" name="registration_enabled" value="1" <%= settings.registration_enabled === '1' ? 'checked' : '' %>><span>开放普通用户注册</span></label>
+      <label class="field checkbox-field"><input type="checkbox" name="registration_require_invite" value="1" <%= settings.registration_require_invite === '1' ? 'checked' : '' %>><span>注册必须填写邀请码</span></label>
+      <label class="field checkbox-field"><input type="checkbox" name="user_invites_enabled" value="1" <%= settings.user_invites_enabled === '1' ? 'checked' : '' %>><span>允许普通用户邀请其他人注册</span></label>
+      <label class="field checkbox-field"><input type="checkbox" name="registration_require_email" value="1" <%= settings.registration_require_email === '1' ? 'checked' : '' %>><span>注册必须填写邮箱并验证</span></label>
+      <label class="field"><span>用户名正则</span><input name="username_regex" value="<%= settings.username_regex %>" required></label>
+      <label class="field"><span>密码正则</span><input name="password_regex" value="<%= settings.password_regex %>" required></label>
+      <label class="field"><span>邮箱正则</span><input name="email_regex" value="<%= settings.email_regex %>" required></label>
+      <div class="form-row"><label class="field"><span>邮箱名单模式</span><select name="email_list_mode"><option value="blacklist" <%= settings.email_list_mode === 'blacklist' ? 'selected' : '' %>>黑名单模式</option><option value="whitelist" <%= settings.email_list_mode === 'whitelist' ? 'selected' : '' %>>白名单模式</option></select></label><label class="field"><span>验证码有效期（秒）</span><input type="number" name="email_code_ttl_seconds" min="60" max="86400" value="<%= settings.email_code_ttl_seconds %>" required></label></div>
+      <label class="field"><span>邮箱白名单</span><textarea name="email_whitelist" rows="5"><%= settings.email_whitelist %></textarea><small>每行一个完整邮箱、@domain.com 或 *@domain.com。</small></label>
+      <label class="field"><span>邮箱黑名单</span><textarea name="email_blacklist" rows="5"><%= settings.email_blacklist %></textarea></label>
+      <label class="field"><span>验证码重发间隔（秒）</span><input type="number" name="email_code_resend_seconds" min="0" max="86400" value="<%= settings.email_code_resend_seconds %>" required></label>
+    </section>
+  </div>
+  <div class="detail-grid settings-grid">
+    <section class="panel">
+      <div class="panel-head"><div><p class="eyebrow">SMTP</p><h2>验证码发件邮箱</h2></div></div>
+      <div class="form-row"><label class="field"><span>SMTP 主机</span><input name="smtp_host" value="<%= settings.smtp_host %>" placeholder="smtp.example.com"></label><label class="field"><span>端口</span><input type="number" name="smtp_port" min="1" max="65535" value="<%= settings.smtp_port %>" required></label></div>
+      <label class="field checkbox-field"><input type="checkbox" name="smtp_secure" value="1" <%= settings.smtp_secure === '1' ? 'checked' : '' %>><span>使用 TLS（通常端口 465）</span></label>
+      <label class="field"><span>SMTP 用户名</span><input name="smtp_user" value="<%= settings.smtp_user %>" autocomplete="off"></label>
+      <label class="field"><span>SMTP 密码</span><input type="password" name="smtp_password" value="" autocomplete="new-password" placeholder="<%= settings.smtp_password_enc ? '已配置，留空保持不变' : '未配置' %>"></label>
+      <label class="field"><span>发件地址</span><input name="mail_from" value="<%= settings.mail_from %>" placeholder="Epay &lt;noreply@example.com&gt;"></label>
+      <div class="alert alert-info">SMTP 密码使用 APP_SECRET 加密存储，不会在管理页面回显。</div>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><div><p class="eyebrow">INVITES</p><h2>邀请码配置</h2></div></div>
+      <div class="form-row"><label class="field"><span>默认邀请上限</span><input type="number" name="invite_default_limit" min="0" value="<%= settings.invite_default_limit %>" required></label><label class="field"><span>随机邀请码长度</span><input type="number" name="invite_random_length" min="6" max="20" value="<%= settings.invite_random_length %>" required></label></div>
+      <label class="field"><span>自定义邀请码费用（CNY）</span><input type="number" name="invite_custom_fee" min="0" step="0.01" value="<%= formatMinor(settings.invite_custom_fee_minor) %>" required></label>
+      <label class="field checkbox-field"><input type="checkbox" name="invite_slot_purchase_enabled" value="1" <%= settings.invite_slot_purchase_enabled === '1' ? 'checked' : '' %>><span>允许用户单独购买邀请名额</span></label>
+      <label class="field"><span>每个邀请名额价格（CNY）</span><input type="number" name="invite_slot_price" min="0" step="0.01" value="<%= formatMinor(settings.invite_slot_price_minor) %>" required></label>
+      <p class="form-hint">自定义邀请码 6-20 位；7 位及以下不能包含数字。费用从用户账户余额扣除。</p>
+    </section>
+  </div>
+  <section class="panel">
+    <div class="panel-head"><div><p class="eyebrow">ACCOUNT TRANSFER FEES</p><h2>充值与提现费率</h2></div></div>
+    <div class="alert alert-info">充值指账户余额进入虚拟卡；提现指卡内余额回到账户余额。手续费均以 CNY 显示，比例使用 bps（10000 bps = 100%）。</div>
+    <div class="form-grid compact-grid">
+      <label class="field checkbox-field"><input type="checkbox" name="card_withdraw_enabled" value="1" <%= settings.card_withdraw_enabled === '1' ? 'checked' : '' %>><span>允许卡内余额提现</span></label>
+      <label class="field"><span>充值费率（bps）</span><input type="number" name="card_deposit_fee_bps" min="0" max="10000" value="<%= settings.card_deposit_fee_bps %>" required></label>
+      <label class="field"><span>最低充值金额（CNY）</span><input type="number" name="card_min_deposit" min="0" step="0.01" value="<%= formatMinor(settings.card_min_deposit_minor) %>" required></label>
+      <label class="field"><span>最低充值手续费（CNY）</span><input type="number" name="card_min_deposit_fee" min="0" step="0.01" value="<%= formatMinor(settings.card_min_deposit_fee_minor) %>" required></label>
+      <label class="field"><span>提现费率（bps）</span><input type="number" name="card_withdraw_fee_bps" min="0" max="10000" value="<%= settings.card_withdraw_fee_bps %>" required></label>
+      <label class="field"><span>最低提现金额（CNY）</span><input type="number" name="card_min_withdraw" min="0" step="0.01" value="<%= formatMinor(settings.card_min_withdraw_minor) %>" required></label>
+      <label class="field"><span>最低提现手续费（CNY）</span><input type="number" name="card_min_withdraw_fee" min="0" step="0.01" value="<%= formatMinor(settings.card_min_withdraw_fee_minor) %>" required></label>
+    </div>
   </section>
-
-  <aside class="panel">
-    <div class="panel-head"><div><p class="eyebrow">DEPLOYMENT</p><h2>部署信息</h2></div></div>
-    <dl class="meta-list">
-      <div><dt>公开地址</dt><dd><code><%= config.baseUrl || '自动识别请求 Host' %></code></dd></div>
-      <div><dt>提交入口</dt><dd><code>/submit.php</code></dd></div>
-      <div><dt>API 入口</dt><dd><code>/api.php</code></dd></div>
-      <div><dt>数据库</dt><dd><code><%= config.databasePath %></code></dd></div>
-      <div><dt>初始管理员</dt><dd><code><%= config.adminUsername %></code></dd></div>
-      <div><dt>会话有效期</dt><dd><%= config.adminSessionHours %> 小时</dd></div>
-      <div><dt>回调重试</dt><dd><%= config.notifyRetryCount %> 次</dd></div>
-    </dl>
-    <div class="alert alert-warning"><strong>生产环境提示：</strong>此网关只用于测试。请务必设置随机 <code>APP_SECRET</code>、强 <code>ADMIN_PASSWORD</code>，并通过 HTTPS 反向代理对外提供服务。</div>
-    <div class="alert alert-info">签名算法：参数按键名 ASCII 升序排列，忽略空值和 <code>sign</code>/<code>sign_type</code>，拼接 <code>&amp;key=商户密钥</code> 后计算小写 MD5。</div>
-  </aside>
-</div>
+  <div class="form-actions"><button class="button button-primary" type="submit">保存全部系统设置</button></div>
+</form>
 <%- include('../partials/admin-end') %>

@@ -207,8 +207,8 @@ test('admin, Epay API, payment, callbacks, failures and chargeback work end to e
   csrf = csrfFrom(response.text);
   response = await agent.post(`/admin/orders/${paidOrder.id}/chargeback`).type('form').send({ _csrf: csrf });
   assert.equal(response.status, 302);
-  assert.equal(appBundle.db.prepare('SELECT status FROM orders WHERE id = ?').get(paidOrder.id).status, 'CHARGEBACK');
-  assert.equal(appBundle.db.prepare('SELECT balance_minor FROM cards WHERE id = ?').get(cardId).balance_minor, 10000);
+  assert.equal(appBundle.db.prepare('SELECT status FROM orders WHERE id = ?').get(paidOrder.id).status, 'PAID');
+  assert.equal(appBundle.db.prepare('SELECT balance_minor FROM cards WHERE id = ?').get(cardId).balance_minor, 8766);
 
   response = await request(appBundle.app).get('/submit.php').query(signedOrderParams('integration-merchant-key', {
     notify_url: `${callbackBase}/notify`,
@@ -231,8 +231,37 @@ test('admin, Epay API, payment, callbacks, failures and chargeback work end to e
     default_currency: settings.default_currency,
     supported_types: settings.supported_types,
     require_card_binding: settings.require_card_binding,
-    require_3ds: settings.require_3ds,
-    auto_success_payments: '1'
+    auto_success_payments: '1',
+    merchant_guarantee_seconds: settings.merchant_guarantee_seconds,
+    registration_enabled: settings.registration_enabled === '1' ? '1' : undefined,
+    registration_require_invite: settings.registration_require_invite === '1' ? '1' : undefined,
+    user_invites_enabled: settings.user_invites_enabled === '1' ? '1' : undefined,
+    registration_require_email: settings.registration_require_email === '1' ? '1' : undefined,
+    email_list_mode: settings.email_list_mode,
+    email_whitelist: settings.email_whitelist,
+    email_blacklist: settings.email_blacklist,
+    username_regex: settings.username_regex,
+    password_regex: settings.password_regex,
+    email_regex: settings.email_regex,
+    email_code_ttl_seconds: settings.email_code_ttl_seconds,
+    email_code_resend_seconds: settings.email_code_resend_seconds,
+    smtp_host: settings.smtp_host,
+    smtp_port: settings.smtp_port,
+    smtp_secure: settings.smtp_secure === '1' ? '1' : undefined,
+    smtp_user: settings.smtp_user,
+    mail_from: settings.mail_from,
+    invite_default_limit: settings.invite_default_limit,
+    invite_random_length: settings.invite_random_length,
+    invite_custom_fee: (Number(settings.invite_custom_fee_minor) / 100).toFixed(2),
+    invite_slot_purchase_enabled: settings.invite_slot_purchase_enabled === '1' ? '1' : undefined,
+    invite_slot_price: (Number(settings.invite_slot_price_minor) / 100).toFixed(2),
+    card_withdraw_enabled: settings.card_withdraw_enabled === '1' ? '1' : undefined,
+    card_deposit_fee_bps: settings.card_deposit_fee_bps,
+    card_min_deposit: (Number(settings.card_min_deposit_minor) / 100).toFixed(2),
+    card_min_deposit_fee: (Number(settings.card_min_deposit_fee_minor) / 100).toFixed(2),
+    card_withdraw_fee_bps: settings.card_withdraw_fee_bps,
+    card_min_withdraw: (Number(settings.card_min_withdraw_minor) / 100).toFixed(2),
+    card_min_withdraw_fee: (Number(settings.card_min_withdraw_fee_minor) / 100).toFixed(2)
   });
   assert.equal(response.status, 302);
   assert.equal(appBundle.db.prepare("SELECT value FROM settings WHERE key = 'auto_success_payments'").get().value, '1');
@@ -388,7 +417,8 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   assert.equal(response.status, 403);
 
   response = await user.get('/admin/cards/new');
-  assert.match(response.text, /初始余额固定为 0/);
+  assert.match(response.text, /开卡赠金/);
+  assert.match(response.text, /Default 分组每张开卡赠送 700\.00 CNY/);
   assert.doesNotMatch(response.text, /<input type="number" name="balance"/);
   csrf = csrfFrom(response.text);
   response = await user.post('/admin/cards').type('form').send({
@@ -406,7 +436,7 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   const userCreatedCard = appBundle.db.prepare('SELECT * FROM cards WHERE id = ?').get(userCreatedCardId);
   assert.equal(userCreatedCard.owner_user_id, normalUser.id);
   assert.equal(userCreatedCard.status, 'active');
-  assert.equal(userCreatedCard.balance_minor, 0);
+  assert.equal(userCreatedCard.balance_minor, 70000);
 
   response = await user.post(`/admin/cards/${userCreatedCardId}/delete`).type('form').send({ _csrf: userCsrf });
   assert.equal(response.status, 403);
@@ -488,7 +518,7 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   assert.equal(response.status, 200);
   assert.equal(response.headers['cache-control'], 'no-store');
   assert.match(response.text, /data-orders-live-url="\/admin\/orders\/live"/);
-  assert.match(response.text, /\/js\/admin\.js\?v=1\./);
+  assert.match(response.text, /\/js\/admin\.js\?v=\d+\.\d+\.\d+/);
   assert.doesNotMatch(response.text, /http-equiv="refresh"/);
 
   const unboundApi = signedOrderParams('roles-merchant-key', {
@@ -534,7 +564,7 @@ test('admin and user roles, card ownership, manual consume and card binding flow
     cvv: cardSecrets.cvv
   });
   assert.equal(response.status, 303);
-  appBundle.db.prepare("UPDATE settings SET value = '0' WHERE key = 'require_3ds'").run();
+  appBundle.db.prepare('UPDATE bins SET require_3ds = 0 WHERE id = ?').run(bin.id);
   response = await request(appBundle.app).get(`/pay/${no3dsTradeNo}`);
   assert.equal(response.status, 200);
   assert.match(response.text, /3DS 验证已关闭/);

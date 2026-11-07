@@ -19,6 +19,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  const selectAll = document.querySelector('[data-select-all]');
+  if (selectAll) {
+    selectAll.addEventListener('change', () => {
+      document.querySelectorAll('input[name="user_ids"]').forEach((box) => { box.checked = selectAll.checked; });
+    });
+  }
+
   document.querySelectorAll('form[data-confirm]').forEach((form) => {
     form.addEventListener('submit', (event) => {
       if (!window.confirm(form.getAttribute('data-confirm') || '确认继续？')) event.preventDefault();

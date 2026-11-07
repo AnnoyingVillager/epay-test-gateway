@@ -21,7 +21,8 @@
       </label>
       <button class="button button-primary button-block" type="submit">登录</button>
     </form>
-    <p class="login-hint">初始管理员账号由 <code>ADMIN_USERNAME</code> 与 <code>ADMIN_PASSWORD</code> 首次启动时创建，之后可在用户管理中新增普通用户或其他管理员。</p>
+    <p class="login-hint">初始管理员账号由 <code>ADMIN_USERNAME</code> 与 <code>ADMIN_PASSWORD</code> 首次启动时创建。账号权限、分组和邀请规则由管理员配置。</p>
+    <% if (registrationEnabled) { %><p class="login-hint">还没有账号？<a class="text-link" href="/register">立即注册</a></p><% } %>
   </section>
   <aside class="login-aside">
     <div class="login-aside-copy">

@@ -1,5 +1,5 @@
 const express = require('express');
-const { normalizeParams, formatMinor } = require('./epay');
+const { normalizeParams, formatMinor, parseMoneyToMinor } = require('./epay');
 const {
   getSetting,
   merchantByPid,
@@ -15,6 +15,8 @@ const {
   paymentUrl,
   markOrderPaid,
   markOrderPaidWithoutCard,
+  payOrderWithAccount,
+  refundOrder,
   expireOrder,
   renderOrderContext
 } = require('./order-service');
@@ -74,12 +76,43 @@ function router({ db, config, notification }) {
     }
   });
 
+  function handleRefundApi(req, res, params) {
+    const merchant = checkMerchant(req, db, config, params);
+    let tradeNo = String(params.trade_no || '').trim();
+    if (!tradeNo && params.out_trade_no) {
+      tradeNo = db.prepare('SELECT trade_no FROM orders WHERE merchant_id = ? AND out_trade_no = ?').get(merchant.id, String(params.out_trade_no))?.trade_no;
+    }
+    if (!tradeNo) throw new EpayError('Order not found', 'ORDER_NOT_FOUND', 404);
+    const amountMinor = params.money || params.refund_money ? parseMoneyToMinor(params.money || params.refund_money) : null;
+    if ((params.money || params.refund_money) && amountMinor === null) throw new EpayError('Invalid refund amount', 'INVALID_REFUND_AMOUNT', 400);
+    const result = refundOrder({
+      db,
+      tradeNo,
+      merchantId: merchant.id,
+      amountMinor,
+      reason: params.reason,
+      createdBy: 'merchant-api',
+      outRefundNo: params.out_refund_no || params.refund_no || null
+    });
+    if (!result.reused) notification.enqueue(result.order.id);
+    res.json({
+      code: 1,
+      msg: result.reused ? 'Refund already exists' : 'success',
+      refund_no: result.refundNo,
+      trade_no: result.order.tradeNo,
+      out_trade_no: result.order.outTradeNo,
+      refund_money: formatMinor(result.amountMinor),
+      status: 'REFUND_SUCCESS'
+    });
+  }
+
   function handleApi(req, res) {
     try {
       const params = normalizeParams({ ...req.query, ...req.body });
-      if (String(params.act || 'order') !== 'order') {
-        throw new EpayError('Only act=order is supported', 'UNSUPPORTED_ACTION');
-      }
+      const action = String(params.act || 'order');
+      if (action === 'refund' && req.method !== 'POST') throw new EpayError('Refund API only accepts POST', 'METHOD_NOT_ALLOWED', 405);
+      if (action === 'refund') return handleRefundApi(req, res, params);
+      if (action !== 'order') throw new EpayError('Only act=order or act=refund is supported', 'UNSUPPORTED_ACTION');
       const merchant = checkMerchant(req, db, config, params);
       const { order, reused, autoPaid } = createPaymentOrder({ req, params, merchant, createdVia: 'api' });
       const payurl = autoPaid ? signedReturnUrl(order, merchant) : paymentUrl(req, config, order.tradeNo);
@@ -132,7 +165,8 @@ function router({ db, config, notification }) {
     if (!currentUser) return [];
     if (currentUser.role === 'admin') {
       return db.prepare(`
-        SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, u.username AS owner_username
+        SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, b.require_3ds AS bin_require_3ds,
+          u.username AS owner_username, u.uid AS owner_uid
         FROM cards c
         JOIN bins b ON b.id = c.bin_id
         LEFT JOIN users u ON u.id = c.owner_user_id
@@ -141,7 +175,8 @@ function router({ db, config, notification }) {
       `).all().map((row) => mapCard(row, config.appSecret, false));
     }
     return db.prepare(`
-      SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, u.username AS owner_username
+      SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, b.require_3ds AS bin_require_3ds,
+        u.username AS owner_username, u.uid AS owner_uid
       FROM cards c
       JOIN bins b ON b.id = c.bin_id
       LEFT JOIN users u ON u.id = c.owner_user_id
@@ -166,7 +201,7 @@ function router({ db, config, notification }) {
       order: renderOrderContext(order, merchant),
       currentUser: req.currentUser,
       userCards: userSelectableCards(req.currentUser),
-      require3ds: getSetting(db, 'require_3ds', '1') === '1',
+      accountBalanceMinor: req.currentUser?.accountBalanceMinor || 0,
       error,
       remainingSeconds: remainingSeconds(order)
     });
@@ -183,7 +218,7 @@ function router({ db, config, notification }) {
       title: '安全支付',
       order: renderOrderContext(order, merchant),
       card,
-      require3ds: getSetting(db, 'require_3ds', '1') === '1',
+      require3ds: Boolean(card?.binRequire3ds),
       error,
       remainingSeconds: remainingSeconds(order)
     });
@@ -206,6 +241,21 @@ function router({ db, config, notification }) {
     }
     return order;
   }
+
+  route.get('/pay/:tradeNo/status', (req, res) => {
+    let order = orderByTradeNo(db, req.params.tradeNo);
+    if (!order) return res.status(404).json({ ok: false, error: { code: 'ORDER_NOT_FOUND', message: 'Order not found' } });
+    if (order.status === 'PENDING' && order.expiresAt <= Date.now()) {
+      if (expireOrder({ db, tradeNo: order.tradeNo })) notification.enqueue(order.id);
+      order = orderByTradeNo(db, req.params.tradeNo);
+    }
+    return res.set('Cache-Control', 'no-store').json({
+      ok: true,
+      status: order.status,
+      expiresAt: order.expiresAt,
+      canPay: order.status === 'PENDING' && order.expiresAt > Date.now()
+    });
+  });
 
   route.get('/pay/:tradeNo', (req, res, next) => {
     try {
@@ -270,6 +320,40 @@ function router({ db, config, notification }) {
     }
   });
 
+  route.post('/pay/:tradeNo/account', (req, res, next) => {
+    try {
+      let order = loadOrder(req, res);
+      if (!order) return;
+      if (!req.currentUser) return res.status(401).render('payment-error', { title: '请先登录', message: '使用账户余额支付前需要登录。', code: 'LOGIN_REQUIRED', returnUrl: order.returnUrl });
+      if (order.cardId) return res.redirect(303, `/pay/${encodeURIComponent(order.tradeNo)}`);
+      const result = payOrderWithAccount({ db, tradeNo: req.params.tradeNo, user: req.currentUser });
+      order = result.order;
+      const merchant = orderMerchant(order);
+      notification.enqueue(order.id);
+      const target = signedReturnUrl(order, merchant);
+      if (!result.paid) {
+        if (req.get('x-payment-ajax') === '1') {
+          return res.status(409).json({ ok: false, status: order.status, error: { code: result.code, message: result.message }, redirectUrl: target });
+        }
+        return res.redirect(303, target);
+      }
+      if (req.get('x-payment-ajax') === '1') return res.json({ ok: true, status: order.status, redirectUrl: target });
+      return res.redirect(303, target);
+    } catch (error) {
+      if (error instanceof EpayError && error.terminal) {
+        const order = orderByTradeNo(db, req.params.tradeNo);
+        if (order) {
+          const merchant = orderMerchant(order);
+          notification.enqueue(order.id);
+          const target = signedReturnUrl(order, merchant);
+          if (req.get('x-payment-ajax') === '1') return res.status(error.statusCode || 409).json({ ok: false, status: order.status, error: { code: error.code, message: error.message }, redirectUrl: target });
+          return res.redirect(303, target);
+        }
+      }
+      next(error);
+    }
+  });
+
   route.post('/pay/:tradeNo/confirm', (req, res, next) => {
     try {
       let order = loadOrder(req, res);
@@ -289,10 +373,18 @@ function router({ db, config, notification }) {
           title: '安全支付',
           order: renderOrderContext(order, merchant),
           card,
-          require3ds: getSetting(db, 'require_3ds', '1') === '1',
+          require3ds: Boolean(card?.binRequire3ds),
           error: result.message,
           remainingSeconds: remainingSeconds(order)
         });
+      }
+      if (result.terminal) {
+        notification.enqueue(order.id);
+        const target = signedReturnUrl(order, merchant);
+        if (req.get('x-payment-ajax') === '1') {
+          return res.status(409).json({ ok: false, status: order.status, error: { code: result.code, message: result.message }, redirectUrl: target });
+        }
+        return res.redirect(303, target);
       }
       notification.enqueue(order.id);
       const target = signedReturnUrl(order, merchant);
