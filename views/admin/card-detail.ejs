@@ -36,7 +36,7 @@
   <section class="panel">
     <div class="panel-head"><div><p class="eyebrow">CARD SETTINGS</p><h2><%= isAdmin ? '修改卡片' : '卡片信息' %></h2></div><span class="pill <%= card.status === 'active' ? 'pill-success' : 'pill-danger' %>"><%= statusLabel(card.status) %></span></div>
     <% if (isAdmin) { %>
-      <form method="post" action="/admin/cards/<%= card.id %>/update" class="stack-form">
+      <form method="post" action="/admin/cards/<%= card.id %>/update" class="stack-form" data-money-confirm data-confirm-title="确认保存卡片设置" data-confirm-message="保存后卡余额和支付状态可能立即变化，请确认当前设置。" data-confirm-action="确认保存" data-confirm-currency="CNY" data-confirm-amount-field="balance" data-confirm-amount-label="卡余额" data-confirm-target-field="owner_user_id" data-confirm-target-label="所属用户" data-confirm-note="余额调整会写入卡片流水。">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <div class="form-row">
           <label class="field"><span>所属用户</span><select name="owner_user_id"><% users.forEach((user) => { %><option value="<%= user.id %>" <%= card.ownerUserId === user.id ? 'selected' : '' %>><%= user.username %> · <%= user.role === 'admin' ? '管理员' : '普通用户' %></option><% }) %></select></label>
@@ -58,7 +58,7 @@
       </form>
       <hr class="divider">
       <div class="panel-head compact-head"><div><p class="eyebrow">MANUAL DEBIT</p><h2>手工消费</h2></div></div>
-      <form method="post" action="/admin/cards/<%= card.id %>/consume" class="form-row">
+      <form method="post" action="/admin/cards/<%= card.id %>/consume" class="form-row" data-money-confirm data-confirm-title="确认手工消费扣款" data-confirm-message="该操作会立即从虚拟卡扣减消费金额，请核对后再提交。" data-confirm-action="确认扣款" data-confirm-tone="danger" data-confirm-currency="CNY" data-confirm-amount-field="amount" data-confirm-target-field="note" data-confirm-target-label="说明" data-confirm-note="手工消费将写入卡片流水，提交后无法撤回。">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <label class="field"><span>消费金额</span><input type="number" name="amount" min="0.01" step="0.01" required></label>
         <label class="field"><span>说明</span><input name="note" value="管理员手工消费" maxlength="120"></label>

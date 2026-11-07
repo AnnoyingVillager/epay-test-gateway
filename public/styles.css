@@ -319,6 +319,21 @@ td code { font-size: .72rem; color: #435862; }
 .message-card > p:not(.eyebrow) { color: var(--ink-soft); font-size: .87rem; }
 .message-actions { display: flex; gap: 10px; justify-content: center; margin-top: 25px; }
 
+body.confirm-open { overflow: hidden; }
+.confirm-dialog { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 20px; }
+.confirm-dialog[hidden] { display: none; }
+.confirm-backdrop { position: absolute; inset: 0; background: rgba(16, 30, 36, .56); backdrop-filter: blur(3px); }
+.confirm-card { position: relative; width: min(460px, 100%); padding: 26px; border: 1px solid var(--line-soft); border-radius: 18px; background: #fff; box-shadow: 0 24px 70px rgba(10, 36, 42, .28); }
+.confirm-card h2 { margin: 0 0 10px; }
+.confirm-message { margin: 0; color: var(--ink-soft); font-size: .86rem; line-height: 1.65; }
+.confirm-details { display: flex; flex-direction: column; gap: 0; margin: 20px 0 0; padding: 4px 14px; background: var(--surface-2); border-radius: 11px; }
+.confirm-details[hidden], .confirm-note[hidden] { display: none; }
+.confirm-details > div { display: flex; justify-content: space-between; gap: 18px; padding: 10px 0; border-bottom: 1px solid var(--line-soft); font-size: .78rem; }
+.confirm-details > div:last-child { border-bottom: 0; }
+.confirm-details dt { color: var(--ink-faint); }
+.confirm-details dd { margin: 0; text-align: right; font-weight: 750; overflow-wrap: anywhere; }
+.confirm-note { margin: 14px 0 0; color: var(--ink-faint); font-size: .72rem; line-height: 1.55; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
 @media (max-width: 1050px) {
   .hero { grid-template-columns: 1fr; gap: 40px; }
   .terminal-card { max-width: 700px; }

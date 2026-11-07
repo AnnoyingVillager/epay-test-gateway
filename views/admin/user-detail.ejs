@@ -55,7 +55,7 @@
 <div class="detail-grid">
   <section class="panel">
     <div class="panel-head"><div><p class="eyebrow">ACCOUNT BALANCE</p><h2>调整账户余额</h2></div></div>
-    <form method="post" action="/admin/users/<%= user.uid %>/balance" class="form-row">
+    <form method="post" action="/admin/users/<%= user.uid %>/balance" class="form-row" data-money-confirm data-confirm-title="确认调整账户余额" data-confirm-message="该操作会立即变动用户账户余额，请核对操作方向和金额。" data-confirm-action="确认调整" data-confirm-currency="CNY" data-confirm-amount-field="amount" data-confirm-target-field="operation" data-confirm-target-label="操作" data-confirm-note="余额调整将写入账户流水，提交后无法撤回。">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <label class="field"><span>操作</span><select name="operation"><option value="add">增加</option><option value="subtract">减少</option><option value="set">设为</option></select></label>
       <label class="field"><span>金额</span><input type="number" name="amount" min="0.01" step="0.01" required></label>

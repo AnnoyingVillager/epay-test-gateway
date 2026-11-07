@@ -14,14 +14,14 @@
         <form method="post" action="/admin/invite/random" data-confirm="更换后旧邀请链接立即失效，确认继续？"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-ghost" type="submit">免费随机换码</button></form>
       </div>
       <hr class="divider">
-      <form method="post" action="/admin/invite/custom" class="form-row">
+      <form method="post" action="/admin/invite/custom" class="form-row" data-money-confirm data-confirm-title="确认更换自定义邀请码" data-confirm-message="确认使用新的自定义邀请码？旧邀请链接将立即失效。" data-confirm-action="确认更换" data-confirm-currency="CNY" data-confirm-cost-minor="<%= user.role === 'admin' ? 0 : settings.invite_custom_fee_minor %>" data-confirm-amount-label="费用" data-confirm-target-field="code" data-confirm-target-label="新邀请码" data-confirm-note="<%= user.role === 'admin' ? '确认后旧邀请链接将立即失效。' : '付费更换会立即从账户余额扣款。' %>">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <label class="field"><span>自定义邀请码</span><input name="code" minlength="6" maxlength="20" pattern="[A-Za-z0-9]{6,20}" required></label>
         <div class="form-actions"><button class="button button-primary" type="submit"><%= user.role === 'admin' ? '免费更换' : `付费更换（${formatMinor(settings.invite_custom_fee_minor)} CNY）` %></button></div>
       </form>
       <% if (settings.invite_slot_purchase_enabled === '1') { %>
         <hr class="divider">
-        <form method="post" action="/admin/invite/slots" class="form-row">
+        <form method="post" action="/admin/invite/slots" class="form-row" data-money-confirm data-confirm-title="确认购买邀请名额" data-confirm-message="购买后邀请名额会立即增加，费用将从账户余额扣除。" data-confirm-action="确认购买" data-confirm-currency="CNY" data-confirm-quantity-field="quantity" data-confirm-unit-minor="<%= settings.invite_slot_price_minor %>" data-confirm-note="最终扣款以服务端价格计算为准。">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <label class="field"><span>购买邀请名额</span><input type="number" name="quantity" min="1" max="100" value="1" required></label>
           <div class="form-actions"><button class="button button-ghost" type="submit">购买名额</button></div>

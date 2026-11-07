@@ -21,6 +21,7 @@
 - 订单超时倒计时、自动过期和服务端二次校验
 - 后台订单页轮询状态变化，支付成功、失败、超时或回调更新后自动刷新，待支付页面另有服务端刷新兜底
 - 支付确认使用 AJAX 提交：按钮立即变灰并防止重复点击，成功后先显示“订单已完成”再自动返回商户
+- 账户与虚拟卡互转、邀请码/邀请名额购买、管理员余额调整和退款等站内资金操作均需二次确认；外部商户调用的网关支付页保持原有确认流程
 - 支付成功、失败、超时、拒付均生成签名回调；成功或失败都按 Epay 参数返回商户
 - 注册规则、邮箱黑白名单、SMTP、邀请码与邀请名额、分组赠金及消费限额均可后台配置
 - 每个用户可继承全局邀请策略或使用独立邀请开关；独立开关不受全局邀请策略影响
@@ -31,7 +32,7 @@
 ## 已发布镜像
 
 - `ghcr.io/annoyingvillager/epay-test-gateway:latest`
-- `ghcr.io/annoyingvillager/epay-test-gateway:2.1.0` 和 `:2.1`（对应 Git 标签 `v2.1.0`）
+- `ghcr.io/annoyingvillager/epay-test-gateway:2.2.0` 和 `:2.2`（对应 Git 标签 `v2.2.0`）
 - 同时提供 `linux/amd64` 与 `linux/arm64` 多架构镜像
 
 ## 无需克隆源码部署
@@ -432,7 +433,7 @@ npm test
 
 ## 发布到 GitHub 与 Docker 镜像
 
-仓库已包含 `.github/workflows/docker.yml`。推送 `main` 分支会构建并推送 `ghcr.io/<owner>/<repo>:latest`；推送 `v2.1.0` 这类标签会额外生成版本标签。
+仓库已包含 `.github/workflows/docker.yml`。推送 `main` 分支会构建并推送 `ghcr.io/<owner>/<repo>:latest`；推送 `v2.2.0` 这类标签会额外生成版本标签。
 
 ```bash
 git init -b main
@@ -440,8 +441,8 @@ git add .
 git commit -m "feat: add Epay test gateway"
 gh auth login
 gh repo create epay-test-gateway --public --source=. --remote=origin --push
-git tag v2.1.0
-git push origin v2.1.0
+git tag v2.2.0
+git push origin v2.2.0
 ```
 
 首次使用 GHCR 时，Actions 使用仓库的 `GITHUB_TOKEN` 推送。部署机器拉取公开镜像：

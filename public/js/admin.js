@@ -32,6 +32,12 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  document.querySelectorAll('button[data-confirm], input[type="submit"][data-confirm]').forEach((control) => {
+    control.addEventListener('click', (event) => {
+      if (!window.confirm(control.getAttribute('data-confirm') || '确认继续？')) event.preventDefault();
+    });
+  });
+
   const liveShell = document.querySelector('[data-orders-live-url]');
   if (liveShell) {
     const url = liveShell.getAttribute('data-orders-live-url');

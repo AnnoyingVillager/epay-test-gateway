@@ -15,7 +15,7 @@
   <section class="panel">
     <div class="panel-head"><div><p class="eyebrow">CARD TRANSFER</p><h2>账户与卡片互转</h2></div></div>
     <% if (!cards.length) { %><div class="empty-state compact">暂无可操作的虚拟卡。<a class="text-link" href="/admin/cards/new">创建虚拟卡</a></div><% } else { %>
-      <form method="post" action="/admin/account/deposit" class="stack-form">
+      <form method="post" action="/admin/account/deposit" class="stack-form" data-money-confirm data-confirm-title="确认充值到虚拟卡" data-confirm-message="系统将从账户余额扣除金额并充值到所选虚拟卡。" data-confirm-action="确认充值" data-confirm-currency="CNY" data-confirm-amount-field="amount" data-confirm-target-field="card_id" data-confirm-target-label="目标卡" data-confirm-note="手续费以服务端计算结果为准，确认后将立即变动账户和卡余额。">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <div class="step-label"><span>1</span> 账户余额充值到虚拟卡</div>
         <label class="field"><span>目标卡</span><select name="card_id"><% cards.forEach((card) => { %><option value="<%= card.id %>"><%= card.id %> · <%= card.last4 %> · 当前 <%= formatMinor(card.balanceMinor) %></option><% }) %></select></label>
@@ -25,7 +25,7 @@
       </form>
       <% if (settings.card_withdraw_enabled === '1') { %>
         <hr class="divider">
-        <form method="post" action="/admin/account/withdraw" class="stack-form">
+        <form method="post" action="/admin/account/withdraw" class="stack-form" data-money-confirm data-confirm-title="确认提现到账户" data-confirm-message="系统将从所选虚拟卡扣除金额，并将扣除手续费后的金额转入账户余额。" data-confirm-action="确认提现" data-confirm-currency="CNY" data-confirm-amount-field="amount" data-confirm-target-field="card_id" data-confirm-target-label="来源卡" data-confirm-note="提现手续费以服务端计算结果为准，确认后将立即变动卡余额和账户余额。">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <div class="step-label"><span>2</span> 卡内余额提现到账户</div>
           <label class="field"><span>来源卡</span><select name="card_id"><% cards.forEach((card) => { %><option value="<%= card.id %>"><%= card.id %> · <%= card.last4 %> · 当前 <%= formatMinor(card.balanceMinor) %></option><% }) %></select></label>

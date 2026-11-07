@@ -146,6 +146,9 @@ test('registration, email verification, invite replacement and invite quotas wor
 
   accountTransaction(db, user.id, 'TEST_CREDIT', 20000, 'Registration feature test credit');
   response = await alice.get('/admin/invite');
+  assert.match(response.text, /data-confirm-dialog/);
+  assert.match(response.text, /data-confirm-title="确认更换自定义邀请码"/);
+  assert.match(response.text, /data-confirm-title="确认购买邀请名额"/);
   let csrf = csrfFrom(response.text);
   response = await alice.post('/admin/invite/custom').type('form').send({ _csrf: csrf, code: 'Bad1234' });
   assert.equal(response.status, 302);
@@ -424,6 +427,9 @@ test('group BIN access, account transfers, super risk lock and archived UID work
   setSetting(db, 'card_withdraw_fee_bps', '100');
   setSetting(db, 'card_min_withdraw_fee_minor', '50');
   response = await userAgent.get('/admin/account');
+  assert.match(response.text, /data-confirm-dialog/);
+  assert.match(response.text, /data-confirm-title="确认充值到虚拟卡"/);
+  assert.match(response.text, /data-confirm-title="确认提现到账户"/);
   csrf = csrfFrom(response.text);
   response = await userAgent.post('/admin/account/deposit').type('form').send({ _csrf: csrf, card_id: defaultCardId, amount: '100.00' });
   assert.equal(response.status, 302);

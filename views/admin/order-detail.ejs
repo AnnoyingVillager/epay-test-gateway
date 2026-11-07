@@ -28,7 +28,7 @@
     <div class="button-row">
       <% if (isAdmin) { %>
         <form method="post" action="/admin/orders/<%= order.id %>/resend"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-ghost" type="submit">重新发送回调</button></form>
-        <% if (order.refundable) { %><form method="post" action="/admin/orders/<%= order.id %>/chargeback" data-confirm="确认发起全额退款？金额将原路返回。"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-danger" type="submit">发起退款</button></form><% } %>
+        <% if (order.refundable) { %><form method="post" action="/admin/orders/<%= order.id %>/chargeback" data-money-confirm data-confirm-title="确认发起全额退款" data-confirm-message="该订单的支付金额将原路返回账户余额或虚拟卡余额。" data-confirm-action="确认退款" data-confirm-tone="danger" data-confirm-currency="CNY" data-confirm-cost-minor="<%= order.moneyMinor %>" data-confirm-amount-label="退款金额" data-confirm-note="退款成功后将生成退款记录并触发通知，无法撤回。"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-danger" type="submit">发起退款</button></form><% } %>
       <% } %>
       <a class="button button-ghost" href="/pay/<%= encodeURIComponent(order.tradeNo) %>" target="_blank" rel="noopener">查看支付页</a>
     </div>

@@ -1,6 +1,6 @@
 {
   "name": "epay-test-gateway",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "private": true,
   "description": "A self-hosted Epay-compatible test gateway with user roles, virtual cards and an admin panel.",
   "main": "server.js",
