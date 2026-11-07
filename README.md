@@ -30,7 +30,7 @@
 ## 已发布镜像
 
 - `ghcr.io/annoyingvillager/epay-test-gateway:latest`
-- `ghcr.io/annoyingvillager/epay-test-gateway:2.0.0` 和 `:2.0`（对应 Git 标签 `v2.0.0`）
+- `ghcr.io/annoyingvillager/epay-test-gateway:2.0.1` 和 `:2.0`（对应 Git 标签 `v2.0.1`）
 - 同时提供 `linux/amd64` 与 `linux/arm64` 多架构镜像
 
 ## 无需克隆源码部署
@@ -86,6 +86,33 @@ docker compose up -d
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
+
+### 轮换 `APP_SECRET`
+
+如果密钥曾公开，请在停止服务并备份数据库后使用内置工具重新加密已有卡片、商户密钥、SMTP 密码和待验证邮箱验证码。不要直接修改 `.env`，否则旧数据将无法解密。
+
+1. 新建临时文件 `.env.rotate`，不要提交到 Git：
+
+```dotenv
+OLD_APP_SECRET=旧 APP_SECRET
+NEW_APP_SECRET=新的 64 位随机十六进制字符串
+```
+
+2. 停止服务并执行迁移：
+
+```bash
+docker compose stop epay
+docker compose run --rm --no-deps --env-file .env.rotate epay node scripts/rotate-app-secret.js
+```
+
+3. 将 `.env` 中的 `APP_SECRET` 改为新值，然后重新启动：
+
+```bash
+docker compose up -d
+rm .env.rotate
+```
+
+轮换完成后旧登录会话会失效，需要重新登录。商户 API 密钥不会被 `APP_SECRET` 轮换改变，应在管理员商户详情页单独轮换。
 
 停止服务：
 
@@ -404,7 +431,7 @@ npm test
 
 ## 发布到 GitHub 与 Docker 镜像
 
-仓库已包含 `.github/workflows/docker.yml`。推送 `main` 分支会构建并推送 `ghcr.io/<owner>/<repo>:latest`；推送 `v2.0.0` 这类标签会额外生成版本标签。
+仓库已包含 `.github/workflows/docker.yml`。推送 `main` 分支会构建并推送 `ghcr.io/<owner>/<repo>:latest`；推送 `v2.0.1` 这类标签会额外生成版本标签。
 
 ```bash
 git init -b main
@@ -412,8 +439,8 @@ git add .
 git commit -m "feat: add Epay test gateway"
 gh auth login
 gh repo create epay-test-gateway --public --source=. --remote=origin --push
-git tag v2.0.0
-git push origin v2.0.0
+git tag v2.0.1
+git push origin v2.0.1
 ```
 
 首次使用 GHCR 时，Actions 使用仓库的 `GITHUB_TOKEN` 推送。部署机器拉取公开镜像：
@@ -428,7 +455,7 @@ docker pull ghcr.io/<owner>/epay-test-gateway:latest
 
 - 此项目故意展示和修改测试虚拟卡信息。不要用于真实银行卡。
 - 修改默认管理员密码、`APP_SECRET` 和商户密钥，并将它们保存在被忽略的本地 `.env` 中。
-- 不要将 `.env`、真实密钥或包含密钥的 Compose 文件提交到 Git。若密钥曾公开，必须视为已经泄露：商户密钥可在管理后台轮换；`APP_SECRET` 不要直接替换，应先备份数据库并迁移已有加密卡片和 SMTP 凭据，或重建测试环境。
+- 不要将 `.env`、真实密钥或包含密钥的 Compose 文件提交到 Git。若密钥曾公开，必须视为已经泄露：商户密钥可在管理后台轮换；`APP_SECRET` 不要直接替换，应使用 `npm run rotate:app-secret` 或容器内 `node scripts/rotate-app-secret.js` 先迁移已有加密数据。
 - 对外暴露时使用 HTTPS 反向代理，并设置 `COOKIE_SECURE=true`、`TRUST_PROXY=true`。
 - 为管理面板增加网络访问限制或 VPN。
 - 卡片号、CVV 和 3DS 密码使用 AES-256-GCM 加密后存储；卡号另以密钥化哈希建立查询索引，加密密钥从 `APP_SECRET` 派生。
