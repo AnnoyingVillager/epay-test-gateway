@@ -7,10 +7,24 @@ function validateCustomInviteCode(code) {
   return { value };
 }
 
+function invitePermissionStatus(user, db) {
+  if (!user) return { enabled: false, mode: 'inherit', canInvite: false, accountActive: false, globalEnabled: false, reason: 'missing_user' };
+  const mode = (user.invitePermissionMode || user.invite_permission_mode) === 'custom' ? 'custom' : 'inherit';
+  const canInvite = Boolean(user.canInvite ?? user.can_invite);
+  const accountActive = Boolean(user.isActive ?? user.is_active);
+  const globalEnabled = getSetting(db, 'user_invites_enabled', '1') === '1';
+  if (user.role === 'admin') {
+    const enabled = accountActive && (mode === 'custom' ? canInvite : true);
+    return { enabled, mode, canInvite, accountActive, globalEnabled, reason: enabled ? 'admin' : 'admin_switch_off' };
+  }
+  if (!accountActive) return { enabled: false, mode, canInvite, accountActive, globalEnabled, reason: 'account_inactive' };
+  if (!canInvite) return { enabled: false, mode, canInvite, accountActive, globalEnabled, reason: 'switch_off' };
+  if (mode === 'inherit' && !globalEnabled) return { enabled: false, mode, canInvite, accountActive, globalEnabled, reason: 'global_off' };
+  return { enabled: true, mode, canInvite, accountActive, globalEnabled, reason: mode === 'custom' ? 'custom_enabled' : 'inherit_enabled' };
+}
+
 function canUseInvites(user, db) {
-  if (!user) return false;
-  if (user.role === 'admin') return true;
-  return getSetting(db, 'user_invites_enabled', '1') === '1' && user.canInvite && user.isActive;
+  return invitePermissionStatus(user, db).enabled;
 }
 
 function replaceInviteCode(db, user, requestedCode) {
@@ -34,4 +48,4 @@ function inviteTopology(db, user) {
   return { inviter, invitees, deletedInvitees };
 }
 
-module.exports = { validateCustomInviteCode, canUseInvites, replaceInviteCode, inviteTopology };
+module.exports = { validateCustomInviteCode, invitePermissionStatus, canUseInvites, replaceInviteCode, inviteTopology };

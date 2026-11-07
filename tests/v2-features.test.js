@@ -228,6 +228,106 @@ test('registration, email verification, invite replacement and invite quotas wor
   assert.equal(response.status, 200);
 });
 
+test('per-user invite permissions inherit the global policy or override it independently', async (t) => {
+  const bundle = makeBundle(t);
+  const { app, db } = bundle;
+  const admin = request.agent(app);
+  await loginAdmin(admin);
+  const defaultGroup = db.prepare("SELECT id FROM user_groups WHERE name = 'Default'").get();
+  setSetting(db, 'registration_enabled', '1');
+  setSetting(db, 'registration_require_invite', '1');
+  setSetting(db, 'registration_require_email', '0');
+  setSetting(db, 'user_invites_enabled', '0');
+
+  let response = await admin.get('/admin/users');
+  assert.match(response.text, /邀请权限模式/);
+  let csrf = csrfFrom(response.text);
+  response = await admin.post('/admin/users').type('form').send({
+    _csrf: csrf,
+    username: 'CustomInviter',
+    password: 'CustomInviter123',
+    role: 'user',
+    group_id: String(defaultGroup.id),
+    invite_permission_mode: 'custom',
+    can_invite: '1'
+  });
+  assert.equal(response.status, 302);
+  let inviter = db.prepare("SELECT * FROM users WHERE username = 'CustomInviter'").get();
+  assert.equal(inviter.invite_permission_mode, 'custom');
+  assert.equal(inviter.can_invite, 1);
+
+  response = await request.agent(app).post('/register').type('form').send({
+    username: 'CustomInvitee',
+    password: 'CustomInvitee123',
+    invite_code: inviter.invite_code
+  });
+  assert.equal(response.status, 302, response.text);
+  assert.equal(db.prepare("SELECT invited_by_uid FROM users WHERE username = 'CustomInvitee'").get().invited_by_uid, inviter.uid);
+
+  response = await admin.post(`/admin/users/${inviter.uid}/invite-permission`).type('form').send({
+    _csrf: csrf,
+    invite_permission_mode: 'custom',
+    can_invite: '0'
+  });
+  assert.equal(response.status, 302);
+  inviter = db.prepare('SELECT * FROM users WHERE id = ?').get(inviter.id);
+  assert.equal(inviter.can_invite, 0);
+  assert.equal(inviter.invite_permission_mode, 'custom');
+
+  response = await request.agent(app).post('/register').type('form').send({
+    username: 'BlockedInvitee',
+    password: 'BlockedInvitee123',
+    invite_code: inviter.invite_code
+  });
+  assert.equal(response.status, 400);
+  assert.match(response.text, /没有邀请权限/);
+
+  response = await admin.post(`/admin/users/${inviter.uid}/invite-permission`).type('form').send({
+    _csrf: csrf,
+    invite_permission_mode: 'inherit',
+    can_invite: '1'
+  });
+  assert.equal(response.status, 302);
+  inviter = db.prepare('SELECT * FROM users WHERE id = ?').get(inviter.id);
+  assert.equal(inviter.can_invite, 1);
+  assert.equal(inviter.invite_permission_mode, 'inherit');
+
+  response = await request.agent(app).post('/register').type('form').send({
+    username: 'InheritedBlocked',
+    password: 'InheritedBlocked123',
+    invite_code: inviter.invite_code
+  });
+  assert.equal(response.status, 400);
+  assert.match(response.text, /没有邀请权限/);
+
+  setSetting(db, 'user_invites_enabled', '1');
+  response = await admin.post(`/admin/users/${inviter.uid}/invite-permission`).type('form').send({
+    _csrf: csrf,
+    invite_permission_mode: 'inherit',
+    can_invite: '0'
+  });
+  assert.equal(response.status, 302);
+  response = await request.agent(app).post('/register').type('form').send({
+    username: 'InheritedSwitchOff',
+    password: 'InheritedSwitchOff123',
+    invite_code: inviter.invite_code
+  });
+  assert.equal(response.status, 400);
+  assert.match(response.text, /没有邀请权限/);
+
+  response = await admin.post(`/admin/users/${inviter.uid}/invite-permission`).type('form').send({
+    _csrf: csrf,
+    invite_permission_mode: 'inherit',
+    can_invite: ['0', '1']
+  });
+  assert.equal(response.status, 302);
+  response = await request.agent(app).post('/register').type('form').send({
+    username: 'InheritedAllowed',
+    password: 'InheritedAllowed123',
+    invite_code: inviter.invite_code
+  });
+  assert.equal(response.status, 302, response.text);
+});
 test('group BIN access, account transfers, super risk lock and archived UID work', async (t) => {
   const bundle = makeBundle(t);
   const { app, db } = bundle;

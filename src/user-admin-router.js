@@ -2,13 +2,14 @@ const express = require('express');
 const { getSetting, getAllSettings, mapUser, mapCard, userByUid, userById, uniqueInviteCode, nextUid, isUsernameReserved } = require('./db');
 const { hashPassword } = require('./crypto');
 const { accountTransaction, depositToCard, withdrawFromCard } = require('./account-service');
-const { canUseInvites, replaceInviteCode, inviteTopology, validateCustomInviteCode } = require('./invite-service');
+const { invitePermissionStatus, canUseInvites, replaceInviteCode, inviteTopology, validateCustomInviteCode } = require('./invite-service');
 const { effectiveSpendLimit, spentMinor } = require('./order-service');
 
 function integer(value, min = 0, max = Number.MAX_SAFE_INTEGER) { const parsed = Number.parseInt(value, 10); return Number.isFinite(parsed) && parsed >= min && parsed <= max ? parsed : null; }
 function moneyInput(value, allowZero = true) { const raw = String(value ?? '').trim(); if (!/^\d{1,10}(?:\.\d{1,2})?$/.test(raw)) return null; const [whole, decimals = ''] = raw.split('.'); const minor = Number(whole) * 100 + Number(decimals.padEnd(2, '0')); return Number.isSafeInteger(minor) && (allowZero || minor > 0) ? minor : null; }
 function redirectMessage(res, path, key, message) { res.redirect(`${path}${path.includes('?') ? '&' : '?'}${key}=${encodeURIComponent(message)}`); }
 function settingInt(db, key, fallback = 0) { const value = Number.parseInt(getSetting(db, key, String(fallback)), 10); return Number.isFinite(value) ? value : fallback; }
+function postedCheckbox(value, fallback = false) { if (value === undefined) return fallback ? 1 : 0; return (Array.isArray(value) ? value : [value]).includes('1') ? 1 : 0; }
 
 function router({ db, config, adminOnly }) {
   const route = express.Router();
@@ -103,14 +104,16 @@ function router({ db, config, adminOnly }) {
 
   route.get('/users', adminOnly, (req, res) => {
     const q = String(req.query.q || '').trim();
-    const users = db.prepare(`SELECT u.*, g.name AS group_name FROM users u LEFT JOIN user_groups g ON g.id = u.group_id WHERE u.deleted_at IS NULL AND (? = '' OR u.username LIKE ? OR CAST(u.uid AS TEXT) = ?) ORDER BY CASE u.role WHEN 'admin' THEN 0 ELSE 1 END, u.created_at DESC`).all(q, `%${q}%`, q).map(mapUser);
-    res.render('admin/users-v2', { title: '用户管理', users, groups: db.prepare('SELECT * FROM user_groups ORDER BY id').all(), q });
+    const users = db.prepare(`SELECT u.*, g.name AS group_name FROM users u LEFT JOIN user_groups g ON g.id = u.group_id WHERE u.deleted_at IS NULL AND (? = '' OR u.username LIKE ? OR CAST(u.uid AS TEXT) = ?) ORDER BY CASE u.role WHEN 'admin' THEN 0 ELSE 1 END, u.created_at DESC`).all(q, `%${q}%`, q).map((row) => { const user = mapUser(row); return { ...user, invitePermission: invitePermissionStatus(user, db) }; });
+    res.render('admin/users-v2', { title: '用户管理', users, groups: db.prepare('SELECT * FROM user_groups ORDER BY id').all(), q, globalInvitesEnabled: getSetting(db, 'user_invites_enabled', '1') === '1' });
   });
 
   route.post('/users', adminOnly, (req, res) => {
     const username = String(req.body.username || '').trim();
     const password = String(req.body.password || '');
     const role = String(req.body.role || 'user');
+    const invitePermissionMode = req.body.invite_permission_mode === 'custom' ? 'custom' : 'inherit';
+    const canInvite = postedCheckbox(req.body.can_invite, true);
     const groupId = integer(req.body.group_id, 1) || db.prepare("SELECT id FROM user_groups WHERE name = 'Default'").get().id;
     if (!db.prepare('SELECT id FROM user_groups WHERE id = ?').get(groupId)) return redirectMessage(res, '/admin/users', 'error', '用户分组不存在。');
     if (!/^[A-Za-z0-9_.-]{3,32}$/.test(username) || isUsernameReserved(db, username) || password.length < 8 || password.length > 128 || !['admin', 'user'].includes(role)) return redirectMessage(res, '/admin/users', 'error', '用户名已被占用或是保留名称，密码或角色无效。');
@@ -118,7 +121,8 @@ function router({ db, config, adminOnly }) {
       const now = Date.now();
       const uid = role === 'admin' && !db.prepare('SELECT id FROM users WHERE uid = 0').get() ? 0 : nextUid(db);
       const code = uniqueInviteCode(db, settingInt(db, 'invite_random_length', 8));
-      db.prepare(`INSERT INTO users (uid, username, password_hash, role, group_id, account_balance_minor, invite_code, invite_limit, can_invite, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1, 1, ?, ?)`).run(uid, username, hashPassword(password), role, groupId, code, role === 'admin' ? 2147483647 : settingInt(db, 'invite_default_limit', 10), now, now);
+      const inviteLimit = role === 'admin' ? 2147483647 : settingInt(db, 'invite_default_limit', 10);
+      db.prepare(`INSERT INTO users (uid, username, password_hash, role, group_id, account_balance_minor, invite_code, invite_limit, invite_permission_mode, can_invite, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 1, ?, ?)`).run(uid, username, hashPassword(password), role, groupId, code, inviteLimit, invitePermissionMode, canInvite, now, now);
       return redirectMessage(res, '/admin/users', 'ok', `用户 ${username} 已创建，UID ${uid}。`);
     } catch (error) {
       if (String(error.message).includes('UNIQUE')) return redirectMessage(res, '/admin/users', 'error', '用户名、UID 或邀请码已存在。');
@@ -159,7 +163,7 @@ function router({ db, config, adminOnly }) {
     const riskEvents = db.prepare('SELECT * FROM risk_events WHERE user_id = ? ORDER BY created_at DESC LIMIT 50').all(user.id);
     const effectiveLimitMinor = effectiveSpendLimit(db, user.id);
     const spentMinorValue = spentMinor(db, user.id);
-    res.render('admin/user-detail', { title: `用户 ${user.username}`, user, topology, cards, groups: db.prepare('SELECT * FROM user_groups ORDER BY id').all(), transactions, riskEvents, effectiveLimitMinor, spentMinor: spentMinorValue });
+    res.render('admin/user-detail', { title: `用户 ${user.username}`, user, topology, cards, groups: db.prepare('SELECT * FROM user_groups ORDER BY id').all(), transactions, riskEvents, effectiveLimitMinor, spentMinor: spentMinorValue, invitePermission: invitePermissionStatus(user, db) });
   });
 
   route.post('/users/:uid/update', adminOnly, (req, res) => {
@@ -178,12 +182,25 @@ function router({ db, config, adminOnly }) {
     const cardLimitUnlimited = req.body.card_balance_limit_unlimited === '1';
     const cardBalanceLimit = cardLimitUnlimited ? null : moneyInput(req.body.card_balance_limit, true);
     const inviteLimit = integer(req.body.invite_limit, 0, 1000000);
+    const invitePermissionMode = ['inherit', 'custom'].includes(String(req.body.invite_permission_mode)) ? String(req.body.invite_permission_mode) : user.invitePermissionMode;
+    const canInvite = postedCheckbox(req.body.can_invite, user.canInvite);
     const isActive = req.body.is_active === '1' ? 1 : 0;
     const disabledReason = String(req.body.disabled_reason || '风险控制').trim().slice(0, 200) || '风险控制';
     if (!groupId || spendLimitInvalid || (!cardLimitUnlimited && cardBalanceLimit === null) || inviteLimit === null) return redirectMessage(res, `/admin/users/${user.uid}`, 'error', '用户参数无效。');
     if (user.role === 'admin' && (!isActive || accountRisk === 'blocked')) return redirectMessage(res, `/admin/users/${user.uid}`, 'error', '不能通过该表单停用管理员账号。');
-    db.prepare(`UPDATE users SET group_id = ?, account_risk = ?, card_risk = ?, spend_limit_minor = ?, card_balance_limit_minor = ?, invite_limit = ?, can_invite = ?, is_active = ?, disabled_reason = ?, updated_at = ? WHERE id = ?`).run(groupId, accountRisk, cardRisk, spendLimit, cardBalanceLimit, inviteLimit, req.body.can_invite === '1' ? 1 : 0, isActive, isActive ? null : disabledReason, Date.now(), user.id);
+    db.prepare(`UPDATE users SET group_id = ?, account_risk = ?, card_risk = ?, spend_limit_minor = ?, card_balance_limit_minor = ?, invite_limit = ?, invite_permission_mode = ?, can_invite = ?, is_active = ?, disabled_reason = ?, updated_at = ? WHERE id = ?`).run(groupId, accountRisk, cardRisk, spendLimit, cardBalanceLimit, inviteLimit, invitePermissionMode, canInvite, isActive, isActive ? null : disabledReason, Date.now(), user.id);
     return redirectMessage(res, `/admin/users/${user.uid}`, 'ok', '用户配置已更新。');
+  });
+
+  route.post('/users/:uid/invite-permission', adminOnly, (req, res) => {
+    const user = userByUid(db, req.params.uid);
+    if (!user || user.deletedAt) return redirectMessage(res, '/admin/users', 'error', '用户不存在。');
+    if (user.superRiskAt) return redirectMessage(res, `/admin/users/${user.uid}`, 'error', '该账号已执行超级风控，不能修改邀请权限。');
+    const invitePermissionMode = ['inherit', 'custom'].includes(String(req.body.invite_permission_mode)) ? String(req.body.invite_permission_mode) : user.invitePermissionMode;
+    const canInvite = postedCheckbox(req.body.can_invite, user.canInvite);
+    if (!['inherit', 'custom'].includes(invitePermissionMode)) return redirectMessage(res, '/admin/users', 'error', '邀请权限模式无效。');
+    db.prepare('UPDATE users SET invite_permission_mode = ?, can_invite = ?, updated_at = ? WHERE id = ?').run(invitePermissionMode, canInvite, Date.now(), user.id);
+    return redirectMessage(res, '/admin/users', 'ok', `用户 ${user.username} 的邀请权限已设为${invitePermissionMode === 'custom' ? '单独开关' : '继承全局'}，单独开关${canInvite ? '开启' : '关闭'}。`);
   });
 
   route.post('/users/:uid/balance', adminOnly, (req, res) => {

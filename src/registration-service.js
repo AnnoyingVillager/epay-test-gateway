@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const { getSetting, userByUsername, nextUid, uniqueInviteCode, isUsernameReserved } = require('./db');
 const { encrypt, hashPassword, timingSafeEqualText } = require('./crypto');
+const { canUseInvites } = require('./invite-service');
 
 function settingInt(db, key, fallback = 0) {
   const value = Number.parseInt(getSetting(db, key, String(fallback)), 10);
@@ -99,10 +100,8 @@ function resolveInviter(db, inviteCode, required) {
   const row = db.prepare(`SELECT u.*, g.name AS group_name FROM users u LEFT JOIN user_groups g ON g.id = u.group_id WHERE u.invite_code = ?`).get(code);
   if (!row) return { error: '邀请码不存在。' };
   if (!row.is_active) return { error: '邀请账号已被停用。' };
-  if (row.role !== 'admin') {
-    if (getSetting(db, 'user_invites_enabled', '1') !== '1' || !row.can_invite) return { error: '该用户当前没有邀请权限。' };
-    if (row.invited_count >= row.invite_limit) return { error: '该邀请码的邀请名额已用完。' };
-  }
+  if (!canUseInvites(row, db)) return { error: '该用户当前没有邀请权限。' };
+  if (row.role !== 'admin' && row.invited_count >= row.invite_limit) return { error: '该邀请码的邀请名额已用完。' };
   return { inviter: row };
 }
 

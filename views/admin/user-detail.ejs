@@ -42,7 +42,11 @@
         <label class="field"><span>禁用理由</span><input name="disabled_reason" value="<%= user.disabledReason || '风险控制' %>" maxlength="200"></label>
         <label class="field checkbox-field"><input type="checkbox" name="is_active" value="1" <%= user.isActive ? 'checked' : '' %>><span>账号启用</span></label>
       </div>
-      <label class="field checkbox-field"><input type="checkbox" name="can_invite" value="1" <%= user.canInvite ? 'checked' : '' %>><span>允许该用户邀请其他人</span></label>
+      <div class="form-row">
+        <label class="field"><span>邀请权限模式</span><select name="invite_permission_mode"><option value="inherit" <%= user.invitePermissionMode !== 'custom' ? 'selected' : '' %>>继承全局策略</option><option value="custom" <%= user.invitePermissionMode === 'custom' ? 'selected' : '' %>>使用单独开关</option></select></label>
+        <label class="field checkbox-field"><input type="hidden" name="can_invite" value="0"><input type="checkbox" name="can_invite" value="1" <%= user.canInvite ? 'checked' : '' %>><span>开启单独邀请开关</span></label>
+      </div>
+      <p class="form-hint">当前有效权限：<strong><%= invitePermission.enabled ? '可邀请' : '不可邀请' %></strong>。继承模式同时受全局策略和单独开关控制；单独开关模式不受全局策略影响。</p>
       <div class="form-actions"><button class="button button-primary" type="submit">保存用户配置</button></div>
     </form>
   </section>

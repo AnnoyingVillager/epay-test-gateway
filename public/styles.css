@@ -251,6 +251,13 @@ td code { font-size: .72rem; color: #435862; }
 .table-primary small { font-size: .68rem; margin-top: 2px; }
 .mini-card { width: 34px; height: 26px; border-radius: 6px; display: grid; place-items: center; color: white; background: linear-gradient(135deg, #14846f, #2e9d9c); font-size: .75rem; font-weight: 800; }
 .align-right { text-align: right; }
+.invite-permission-cell { min-width: 250px; }
+.invite-permission-status { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+.invite-permission-cell > small { display: block; color: var(--ink-faint); font-size: .66rem; white-space: nowrap; }
+.invite-permission-form { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.invite-permission-form select { min-width: 104px; height: 34px; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); font-size: .72rem; }
+.invite-permission-form .compact-checkbox { display: flex; flex-direction: row; align-items: center; gap: 5px; min-height: 34px; margin: 0; white-space: nowrap; font-size: .72rem; }
+.invite-permission-form .button { white-space: nowrap; }
 .toolbar { display: flex; justify-content: space-between; align-items: flex-end; gap: 14px; margin-bottom: 20px; flex-wrap: wrap; }
 .empty-state { text-align: center; padding: 50px 20px; background: var(--surface-2); border-radius: 12px; }
 .empty-state strong { display: block; font-size: .95rem; }

@@ -151,6 +151,7 @@ function migrate(db, config) {
       invite_limit INTEGER NOT NULL DEFAULT 10 CHECK(invite_limit >= 0),
       invited_count INTEGER NOT NULL DEFAULT 0 CHECK(invited_count >= 0),
       can_invite INTEGER NOT NULL DEFAULT 1,
+      invite_permission_mode TEXT NOT NULL DEFAULT 'inherit' CHECK(invite_permission_mode IN ('inherit', 'custom')),
       is_active INTEGER NOT NULL DEFAULT 1,
       disabled_reason TEXT,
       account_risk TEXT NOT NULL DEFAULT 'normal' CHECK(account_risk IN ('normal', 'watch', 'blocked')),
@@ -374,6 +375,7 @@ function migrate(db, config) {
   ensureColumn(db, 'users', 'invite_limit', 'INTEGER NOT NULL DEFAULT 10');
   ensureColumn(db, 'users', 'invited_count', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'users', 'can_invite', 'INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'users', 'invite_permission_mode', "TEXT NOT NULL DEFAULT 'inherit' CHECK(invite_permission_mode IN ('inherit', 'custom'))");
   ensureColumn(db, 'users', 'disabled_reason', 'TEXT');
   ensureColumn(db, 'users', 'account_risk', "TEXT NOT NULL DEFAULT 'normal'");
   ensureColumn(db, 'users', 'card_risk', "TEXT NOT NULL DEFAULT 'normal'");
@@ -572,6 +574,7 @@ function mapUser(row) {
     inviteLimit: row.invite_limit ?? 0,
     invitedCount: row.invited_count || 0,
     canInvite: Boolean(row.can_invite),
+    invitePermissionMode: row.invite_permission_mode || 'inherit',
     isActive: Boolean(row.is_active),
     disabledReason: row.disabled_reason || null,
     accountRisk: row.account_risk || 'normal',

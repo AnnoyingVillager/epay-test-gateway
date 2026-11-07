@@ -23,6 +23,7 @@
 - 支付确认使用 AJAX 提交：按钮立即变灰并防止重复点击，成功后先显示“订单已完成”再自动返回商户
 - 支付成功、失败、超时、拒付均生成签名回调；成功或失败都按 Epay 参数返回商户
 - 注册规则、邮箱黑白名单、SMTP、邀请码与邀请名额、分组赠金及消费限额均可后台配置
+- 每个用户可继承全局邀请策略或使用独立邀请开关；独立开关不受全局邀请策略影响
 - 商户余额、佣金比例、借记卡即时结算、信用卡担保结算和退款 API
 - SQLite 数据持久化并内置旧库迁移，单容器部署
 - 多阶段 Dockerfile，GitHub Actions 自动构建 `linux/amd64` 与 `linux/arm64` 镜像
@@ -30,7 +31,7 @@
 ## 已发布镜像
 
 - `ghcr.io/annoyingvillager/epay-test-gateway:latest`
-- `ghcr.io/annoyingvillager/epay-test-gateway:2.0.1` 和 `:2.0`（对应 Git 标签 `v2.0.1`）
+- `ghcr.io/annoyingvillager/epay-test-gateway:2.1.0` 和 `:2.1`（对应 Git 标签 `v2.1.0`）
 - 同时提供 `linux/amd64` 与 `linux/arm64` 多架构镜像
 
 ## 无需克隆源码部署
@@ -186,7 +187,7 @@ docker run -d \
 | 查看订单 | 全部 | 仅自己卡片关联的订单 |
 | 用户、分组、商户、系统设置 | 是 | 否 |
 | 账户余额充提 | 是 | 是，受后台费率和限额约束 |
-| 邀请注册 | 是 | 有邀请权限时可用 |
+| 邀请注册 | 是，可按单独开关关闭 | 可继承全局策略或使用独立开关；独立开关不受全局策略影响 |
 
 管理员不能停用当前账号，也不能移除最后一个启用的管理员。
 
@@ -431,7 +432,7 @@ npm test
 
 ## 发布到 GitHub 与 Docker 镜像
 
-仓库已包含 `.github/workflows/docker.yml`。推送 `main` 分支会构建并推送 `ghcr.io/<owner>/<repo>:latest`；推送 `v2.0.1` 这类标签会额外生成版本标签。
+仓库已包含 `.github/workflows/docker.yml`。推送 `main` 分支会构建并推送 `ghcr.io/<owner>/<repo>:latest`；推送 `v2.1.0` 这类标签会额外生成版本标签。
 
 ```bash
 git init -b main
@@ -439,8 +440,8 @@ git add .
 git commit -m "feat: add Epay test gateway"
 gh auth login
 gh repo create epay-test-gateway --public --source=. --remote=origin --push
-git tag v2.0.1
-git push origin v2.0.1
+git tag v2.1.0
+git push origin v2.1.0
 ```
 
 首次使用 GHCR 时，Actions 使用仓库的 `GITHUB_TOKEN` 推送。部署机器拉取公开镜像：
@@ -472,6 +473,7 @@ docker pull ghcr.io/<owner>/epay-test-gateway:latest
 
 - v2 会在启动时自动为旧 SQLite 数据库补充新表和新字段；升级前仍建议备份 `epay.db`。
 - 旧版全局 3DS 设置会在首次迁移时复制到已有 BIN，之后按 BIN 独立管理。
+- 新增的每用户邀请权限模式默认继承全局策略，保持旧版行为；切换为单独开关后不再受全局邀请策略影响。
 - 普通用户的已加密卡片数据和订单历史会保留。
 - 旧订单没有结算模式快照时按历史订单展示；新支付按借记卡即时结算、信用卡担保结算执行。
 - 若必须继续使用旧行为，可固定旧镜像标签 `1.2.5`；`main` 分支从 v2 开始。
