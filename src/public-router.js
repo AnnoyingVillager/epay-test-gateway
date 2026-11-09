@@ -188,6 +188,16 @@ function router({ db, config, notification }) {
     return res.status(statusCode).render('payment-bind', {
       title: '绑定虚拟卡支付',
       order: renderOrderContext(order, merchant),
+      error,
+      remainingSeconds: remainingSeconds(order)
+    });
+  }
+
+  function renderLoggedInPayment(req, res, order, { error = null, statusCode = 200 } = {}) {
+    const merchant = orderMerchant(order);
+    return res.status(statusCode).render('payment-select', {
+      title: '选择支付方式',
+      order: renderOrderContext(order, merchant),
       currentUser: req.currentUser,
       userCards: userSelectableCards(req.currentUser),
       accountBalanceMinor: req.currentUser?.accountBalanceMinor || 0,
@@ -201,6 +211,7 @@ function router({ db, config, notification }) {
     const card = order.cardId ? cardById(db, config.appSecret, order.cardId, false) : null;
     const allowBinding = getSetting(db, 'require_card_binding', '1') === '1';
     if (!card && order.status === 'PENDING' && allowBinding) {
+      if (req.currentUser) return renderLoggedInPayment(req, res, order, { error, statusCode });
       return renderBinding(req, res, order, { error, statusCode });
     }
     return res.status(statusCode).render('payment', {
@@ -284,9 +295,9 @@ function router({ db, config, notification }) {
       if (selectedCardId && req.currentUser) {
         card = cardById(db, config.appSecret, selectedCardId, true);
         if (card && card.ownerUserId !== req.currentUser.id) {
-          return renderBinding(req, res, order, { error: '该虚拟卡不属于当前登录用户。', statusCode: 403 });
+          return renderLoggedInPayment(req, res, order, { error: '该虚拟卡不属于当前登录用户。', statusCode: 403 });
         }
-      } else {
+      } else if (!req.currentUser) {
         const cardNumber = normalizeCardNumber(req.body.card_number);
         const expiry = parseCardExpiry(req.body.expiry);
         const cvv = String(req.body.cvv || '').trim();
@@ -296,9 +307,14 @@ function router({ db, config, notification }) {
             card = candidate;
           }
         }
+      } else {
+        return renderLoggedInPayment(req, res, order, { error: '请选择当前账号名下的虚拟卡。', statusCode: 400 });
       }
 
-      if (!card) return renderBinding(req, res, order, { error: '卡号、有效期或 CVV 不匹配，请检查后重试。', statusCode: 400 });
+      if (!card) {
+        if (req.currentUser) return renderLoggedInPayment(req, res, order, { error: '所选虚拟卡不存在，请重新选择。', statusCode: 400 });
+        return renderBinding(req, res, order, { error: '卡号、有效期或 CVV 不匹配，请检查后重试。', statusCode: 400 });
+      }
 
       const updated = db.prepare("UPDATE orders SET card_id = ? WHERE id = ? AND status = 'PENDING' AND card_id IS NULL")
         .run(card.id, order.id).changes;

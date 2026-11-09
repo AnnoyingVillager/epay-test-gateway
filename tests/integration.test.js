@@ -554,6 +554,7 @@ test('admin and user roles, card ownership, manual consume and card binding flow
 
   response = await admin.get(`/pay/${loginBindingTradeNo}`);
   assert.equal(response.status, 200);
+  assert.doesNotMatch(response.text, /name="card_number"/);
   const adminCardOption = new RegExp(`<option value="${adminCardId}">Roles Test BIN \\(借记卡\\) 553311\\*\\*\\*${adminCard.last4}</option>`);
   const normalUserCardOption = new RegExp(`<option value="${cardId}">`);
   assert.match(response.text, adminCardOption);
@@ -575,9 +576,19 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   response = await payingUser.get(`/pay/${loginBindingTradeNo}`);
   assert.equal(response.status, 200);
   assert.match(response.text, /选择我的虚拟卡/);
+  assert.doesNotMatch(response.text, /name="card_number"/);
+  assert.doesNotMatch(response.text, /使用银行卡信息绑卡/);
   const userCardOption = new RegExp(`<option value="${userCreatedCardId}">Roles Test BIN \\(借记卡\\) 553311\\*\\*\\*${userCreatedCard.last4}</option>`);
   assert.match(response.text, userCardOption);
   assert.doesNotMatch(response.text, new RegExp(`<option value="${userCreatedCardId}">${userCreatedCardId}`));
+  response = await payingUser.post(`/pay/${loginBindingTradeNo}/bind`).type('form').send({
+    card_number: cardSecrets.cardNumber,
+    expiry: cardExpiry,
+    cvv: cardSecrets.cvv
+  });
+  assert.equal(response.status, 400);
+  assert.match(response.text, /请选择当前账号名下的虚拟卡/);
+  assert.equal(appBundle.db.prepare('SELECT card_id FROM orders WHERE trade_no = ?').get(loginBindingTradeNo).card_id, null);
   response = await payingUser.post(`/pay/${loginBindingTradeNo}/bind`).type('form').send({ card_id: userCreatedCardId });
   assert.equal(response.status, 303);
   assert.equal(appBundle.db.prepare('SELECT card_id FROM orders WHERE trade_no = ?').get(loginBindingTradeNo).card_id, userCreatedCardId);

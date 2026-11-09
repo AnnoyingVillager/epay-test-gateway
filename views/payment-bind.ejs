@@ -29,39 +29,13 @@
       <div class="step-label"><span>1</span> 绑定虚拟银行卡</div>
       <% if (error) { %><div class="alert alert-danger" role="alert"><%= error %></div><% } %>
 
-      <% if (!currentUser) { %>
-        <div class="alert alert-info">该订单尚未绑定虚拟卡。你可以登录后使用账户余额或选择自己的卡片，也可以直接输入卡号、有效期和 CVV 完成绑卡。</div>
-        <form method="post" action="/pay/<%= encodeURIComponent(order.tradeNo) %>/login" class="stack-form" data-payment-submit>
-          <div class="step-label"><span>A</span> 登录后选卡</div>
-          <label class="field"><span>用户名</span><input name="username" autocomplete="username" required></label>
-          <label class="field"><span>密码</span><input type="password" name="password" autocomplete="current-password" required></label>
-          <button class="button button-primary button-block" type="submit">登录并选择卡片</button>
-        </form>
-      <% } else { %>
-        <div class="alert alert-info">当前登录：<strong><%= currentUser.username %></strong>（UID <%= currentUser.uid %>）。账户余额：<strong><%= order.currency %> <%= formatMinor(accountBalanceMinor) %></strong>。</div>
-        <form method="post" action="/pay/<%= encodeURIComponent(order.tradeNo) %>/account" class="stack-form" data-payment-submit data-payment-redirect>
-          <div class="step-label"><span>A</span> 使用账户余额支付</div>
-          <button class="button button-primary button-block" type="submit" <%= order.canPay && accountBalanceMinor >= order.moneyMinor ? '' : 'disabled' %>>账户余额支付 <%= order.currency %> <%= order.money %></button>
-          <p class="secure-note">登录后可直接使用账户余额支付，不再进行 3DS 或卡片验证。</p>
-        </form>
-        <hr class="divider">
-        <% if (userCards.length) { %>
-          <form method="post" action="/pay/<%= encodeURIComponent(order.tradeNo) %>/bind" class="stack-form" data-payment-submit>
-            <div class="step-label"><span>B</span> 选择我的虚拟卡</div>
-            <label class="field"><span>可用卡片</span>
-              <select name="card_id" required>
-                <% userCards.forEach((card) => { %>
-                  <option value="<%= card.id %>"><%= card.binName %> (<%= card.cardType === 'credit' ? '信用卡' : '借记卡' %>) <%= card.binPrefix %>***<%= card.last4 %></option>
-                <% }) %>
-              </select>
-            </label>
-            <button class="button button-primary button-block" type="submit" <%= order.canPay ? '' : 'disabled' %>>使用选中的卡片支付</button>
-          </form>
-        <% } else { %>
-          <div class="empty-state compact">当前账号还没有虚拟卡。<a class="text-link" href="/admin/cards/new">先创建一张虚拟卡</a></div>
-        <% } %>
-        <p class="form-hint">登录身份不对时，可以<a class="text-link" href="/admin/logout">退出当前账号</a>后使用其他账号重新登录。</p>
-      <% } %>
+      <div class="alert alert-info">该订单尚未绑定虚拟卡。你可以登录后使用账户余额或选择自己的卡片，也可以直接输入卡号、有效期和 CVV 完成绑卡。</div>
+      <form method="post" action="/pay/<%= encodeURIComponent(order.tradeNo) %>/login" class="stack-form" data-payment-submit>
+        <div class="step-label"><span>A</span> 登录后选卡</div>
+        <label class="field"><span>用户名</span><input name="username" autocomplete="username" required></label>
+        <label class="field"><span>密码</span><input type="password" name="password" autocomplete="current-password" required></label>
+        <button class="button button-primary button-block" type="submit">登录并选择卡片</button>
+      </form>
 
       <hr class="divider">
       <form method="post" action="/pay/<%= encodeURIComponent(order.tradeNo) %>/bind" class="stack-form" data-payment-submit>
@@ -80,7 +54,7 @@
             <input type="password" name="cvv" inputmode="numeric" pattern="[0-9]{3,4}" maxlength="4" placeholder="3-4 位 CVV" required autocomplete="cc-csc">
           </label>
         </div>
-        <button class="button <%= currentUser ? 'button-ghost' : 'button-primary' %> button-block" type="submit" <%= order.canPay ? '' : 'disabled' %>>验证卡片并继续</button>
+        <button class="button button-primary button-block" type="submit" <%= order.canPay ? '' : 'disabled' %>>验证卡片并继续</button>
         <p class="secure-note">绑定后订单只允许使用该虚拟卡。是否需要 3DS 密码由卡片所属 BIN 配置决定，不会产生真实资金交易。</p>
       </form>
     </div>
