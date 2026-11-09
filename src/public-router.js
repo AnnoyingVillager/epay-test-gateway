@@ -163,17 +163,6 @@ function router({ db, config, notification }) {
 
   function userSelectableCards(currentUser) {
     if (!currentUser) return [];
-    if (currentUser.role === 'admin') {
-      return db.prepare(`
-        SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, b.require_3ds AS bin_require_3ds,
-          u.username AS owner_username, u.uid AS owner_uid
-        FROM cards c
-        JOIN bins b ON b.id = c.bin_id
-        LEFT JOIN users u ON u.id = c.owner_user_id
-        ORDER BY CASE c.status WHEN 'active' THEN 0 ELSE 1 END, c.created_at DESC
-        LIMIT 300
-      `).all().map((row) => mapCard(row, config.appSecret, false));
-    }
     return db.prepare(`
       SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, b.require_3ds AS bin_require_3ds,
         u.username AS owner_username, u.uid AS owner_uid
@@ -294,7 +283,7 @@ function router({ db, config, notification }) {
 
       if (selectedCardId && req.currentUser) {
         card = cardById(db, config.appSecret, selectedCardId, true);
-        if (card && req.currentUser.role === 'user' && card.ownerUserId !== req.currentUser.id) {
+        if (card && card.ownerUserId !== req.currentUser.id) {
           return renderBinding(req, res, order, { error: '该虚拟卡不属于当前登录用户。', statusCode: 403 });
         }
       } else {

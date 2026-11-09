@@ -383,6 +383,26 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   const cardId = decodeURIComponent(response.headers.location.split('/admin/cards/')[1].split('?')[0]);
   assert.equal(appBundle.db.prepare('SELECT owner_user_id FROM cards WHERE id = ?').get(cardId).owner_user_id, normalUser.id);
 
+  const rootAdmin = appBundle.db.prepare('SELECT id FROM users WHERE uid = 0').get();
+  response = await admin.get('/admin/cards/new');
+  csrf = csrfFrom(response.text);
+  response = await admin.post('/admin/cards').type('form').send({
+    _csrf: csrf,
+    owner_user_id: String(rootAdmin.id),
+    bin_id: String(bin.id),
+    balance: '50.00',
+    expires_month: '12',
+    expires_year: String(new Date().getFullYear() + 5),
+    cvv: '654',
+    pin: '112233',
+    status: 'active',
+    decline_reason: ''
+  });
+  assert.equal(response.status, 302);
+  const adminCardId = decodeURIComponent(response.headers.location.split('/admin/cards/')[1].split('?')[0]);
+  const adminCard = appBundle.db.prepare('SELECT * FROM cards WHERE id = ?').get(adminCardId);
+  assert.equal(adminCard.owner_user_id, rootAdmin.id);
+
   const user = request.agent(appBundle.app);
   response = await user.post('/admin/login').type('form').send({ username: 'normal-user', password: 'normal-password' });
   assert.equal(response.status, 302);
@@ -532,6 +552,17 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   assert.equal(response.body.bind_card, null);
   const loginBindingTradeNo = response.body.trade_no;
 
+  response = await admin.get(`/pay/${loginBindingTradeNo}`);
+  assert.equal(response.status, 200);
+  const adminCardOption = new RegExp(`<option value="${adminCardId}">Roles Test BIN \\(借记卡\\) 553311\\*\\*\\*${adminCard.last4}</option>`);
+  const normalUserCardOption = new RegExp(`<option value="${cardId}">`);
+  assert.match(response.text, adminCardOption);
+  assert.doesNotMatch(response.text, normalUserCardOption);
+  response = await admin.post(`/pay/${loginBindingTradeNo}/bind`).type('form').send({ card_id: cardId });
+  assert.equal(response.status, 403);
+  assert.match(response.text, /该虚拟卡不属于当前登录用户/);
+  assert.equal(appBundle.db.prepare('SELECT card_id FROM orders WHERE trade_no = ?').get(loginBindingTradeNo).card_id, null);
+
   const payingUser = request.agent(appBundle.app);
   response = await payingUser.get(`/pay/${loginBindingTradeNo}`);
   assert.equal(response.status, 200);
@@ -544,7 +575,9 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   response = await payingUser.get(`/pay/${loginBindingTradeNo}`);
   assert.equal(response.status, 200);
   assert.match(response.text, /选择我的虚拟卡/);
-  assert.match(response.text, new RegExp(userCreatedCardId));
+  const userCardOption = new RegExp(`<option value="${userCreatedCardId}">Roles Test BIN \\(借记卡\\) 553311\\*\\*\\*${userCreatedCard.last4}</option>`);
+  assert.match(response.text, userCardOption);
+  assert.doesNotMatch(response.text, new RegExp(`<option value="${userCreatedCardId}">${userCreatedCardId}`));
   response = await payingUser.post(`/pay/${loginBindingTradeNo}/bind`).type('form').send({ card_id: userCreatedCardId });
   assert.equal(response.status, 303);
   assert.equal(appBundle.db.prepare('SELECT card_id FROM orders WHERE trade_no = ?').get(loginBindingTradeNo).card_id, userCreatedCardId);

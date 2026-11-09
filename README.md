@@ -14,7 +14,7 @@
 - 管理员可修改虚拟卡余额、有效期、CVV、3DS 密码、状态，并记录手工消费
 - 管理员可删除余额为 0 且无进行中订单的虚拟卡；仅当 BIN 内没有卡片时可删除 BIN
 - 借记卡支付后即时结算且不可退款；信用卡与账户余额支付在担保期内可原路退款
-- 订单绑卡：已绑定订单只接受指定虚拟卡；未绑定订单可登录选卡，或通过卡号、有效期和 CVV 绑卡
+- 订单绑卡：已绑定订单只接受指定虚拟卡；未绑定订单可登录选卡，或通过卡号、有效期和 CVV 绑卡；管理员和普通用户都只能选择本人名下卡片
 - 3DS 验证按卡 BIN 独立开关；关闭后支付确认无需输入 3DS 密码
 - 管理员可开启“自动成功模式”，让所有通过签名校验的支付请求直接完成，并立即返回 Epay 成功参数
 - 未携带 `bind_card` 的 `/submit.php` 请求不再报错，会跳转到绑卡支付页
@@ -32,7 +32,7 @@
 ## 已发布镜像
 
 - `ghcr.io/annoyingvillager/epay-test-gateway:latest`
-- `ghcr.io/annoyingvillager/epay-test-gateway:2.2.1` 和 `:2.2`（对应 Git 标签 `v2.2.1`）
+- `ghcr.io/annoyingvillager/epay-test-gateway:2.2.2` 和 `:2.2`（对应 Git 标签 `v2.2.2`）
 - 同时提供 `linux/amd64` 与 `linux/arm64` 多架构镜像
 
 ## 无需克隆源码部署
@@ -184,7 +184,7 @@ docker run -d \
 | 删除虚拟卡 | 是，仅余额为 0 且无进行中订单 | 否 |
 | 删除卡 BIN | 是，仅限无卡 BIN | 否 |
 | 手工消费 | 是 | 否 |
-| 绑卡支付消费 | 是 | 是，只能选择自己的卡片 |
+| 绑卡支付消费 | 是，只能选择自己的卡片 | 是，只能选择自己的卡片 |
 | 查看订单 | 全部 | 仅自己卡片关联的订单 |
 | 用户、分组、商户、系统设置 | 是 | 否 |
 | 账户余额充提 | 是 | 是，受后台费率和限额约束 |
@@ -433,7 +433,7 @@ npm test
 
 ## 发布到 GitHub 与 Docker 镜像
 
-仓库已包含 `.github/workflows/docker.yml`。推送 `main` 分支会构建并推送 `ghcr.io/<owner>/<repo>:latest`；推送 `v2.2.1` 这类标签会额外生成版本标签。
+仓库已包含 `.github/workflows/docker.yml` 和 `.github/workflows/release.yml`。推送 `main` 分支会构建并推送 `ghcr.io/<owner>/<repo>:latest`；推送 `v2.2.2` 这类标签会额外生成版本镜像，并自动创建对应的 GitHub Release 与发布说明。
 
 ```bash
 git init -b main
@@ -441,8 +441,8 @@ git add .
 git commit -m "feat: add Epay test gateway"
 gh auth login
 gh repo create epay-test-gateway --public --source=. --remote=origin --push
-git tag v2.2.1
-git push origin v2.2.1
+git tag v2.2.2
+git push origin v2.2.2
 ```
 
 首次使用 GHCR 时，Actions 使用仓库的 `GITHUB_TOKEN` 推送。部署机器拉取公开镜像：

@@ -51,7 +51,7 @@
             <label class="field"><span>可用卡片</span>
               <select name="card_id" required>
                 <% userCards.forEach((card) => { %>
-                  <option value="<%= card.id %>"><%= card.id %> · •••• <%= card.last4 %> · <%= card.currency %> <%= formatMinor(card.balanceMinor) %> · <%= statusLabel(card.status) %></option>
+                  <option value="<%= card.id %>"><%= card.binName %> (<%= card.cardType === 'credit' ? '信用卡' : '借记卡' %>) <%= card.binPrefix %>***<%= card.last4 %></option>
                 <% }) %>
               </select>
             </label>
