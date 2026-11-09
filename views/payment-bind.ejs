@@ -39,7 +39,7 @@
         </form>
       <% } else { %>
         <div class="alert alert-info">当前登录：<strong><%= currentUser.username %></strong>（UID <%= currentUser.uid %>）。账户余额：<strong><%= order.currency %> <%= formatMinor(accountBalanceMinor) %></strong>。</div>
-        <form method="post" action="/pay/<%= encodeURIComponent(order.tradeNo) %>/account" class="stack-form" data-payment-submit>
+        <form method="post" action="/pay/<%= encodeURIComponent(order.tradeNo) %>/account" class="stack-form" data-payment-submit data-payment-redirect>
           <div class="step-label"><span>A</span> 使用账户余额支付</div>
           <button class="button button-primary button-block" type="submit" <%= order.canPay && accountBalanceMinor >= order.moneyMinor ? '' : 'disabled' %>>账户余额支付 <%= order.currency %> <%= order.money %></button>
           <p class="secure-note">登录后可直接使用账户余额支付，不再进行 3DS 或卡片验证。</p>

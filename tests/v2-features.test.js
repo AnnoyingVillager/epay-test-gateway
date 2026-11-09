@@ -455,6 +455,7 @@ test('group BIN access, account transfers, super risk lock and archived UID work
   assert.equal(response.status, 200);
   assert.equal(response.body.ok, true);
   assert.equal(response.body.status, 'PAID');
+  assert.match(response.body.redirectUrl, /^http:\/\/127\.0\.0\.1:1\/return\?/);
   let accountOrder = db.prepare('SELECT * FROM orders WHERE trade_no = ?').get(accountTradeNo);
   assert.equal(accountOrder.payment_method, 'account');
   assert.equal(accountOrder.settlement_mode, 'guarantee');

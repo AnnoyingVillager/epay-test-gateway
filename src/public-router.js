@@ -324,7 +324,12 @@ function router({ db, config, notification }) {
     try {
       let order = loadOrder(req, res);
       if (!order) return;
-      if (!req.currentUser) return res.status(401).render('payment-error', { title: '请先登录', message: '使用账户余额支付前需要登录。', code: 'LOGIN_REQUIRED', returnUrl: order.returnUrl });
+      if (!req.currentUser) {
+        if (req.get('x-payment-ajax') === '1') {
+          return res.status(401).json({ ok: false, status: order.status, error: { code: 'LOGIN_REQUIRED', message: '使用账户余额支付前需要登录。' } });
+        }
+        return res.status(401).render('payment-error', { title: '请先登录', message: '使用账户余额支付前需要登录。', code: 'LOGIN_REQUIRED', returnUrl: order.returnUrl });
+      }
       if (order.cardId) return res.redirect(303, `/pay/${encodeURIComponent(order.tradeNo)}`);
       const result = payOrderWithAccount({ db, tradeNo: req.params.tradeNo, user: req.currentUser });
       order = result.order;
