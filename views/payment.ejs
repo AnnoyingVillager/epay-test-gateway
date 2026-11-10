@@ -5,7 +5,10 @@
       <span class="brand-mark">E</span>
       <span><strong>Epay</strong><small>Secure Test Checkout</small></span>
     </a>
-    <span class="test-badge">SANDBOX</span>
+    <div class="checkout-header-actions">
+      <span class="test-badge">SANDBOX</span>
+      <% if (currentUser) { %><a class="text-link" href="/pay/<%= encodeURIComponent(order.tradeNo) %>/logout">退出当前账号</a><% } %>
+    </div>
   </header>
 
   <section class="checkout-card">

@@ -1,4 +1,5 @@
 const { getSetting, cardById } = require('./db');
+const { formatCardLabel } = require('./card-format');
 
 function transferFee(amountMinor, bps, minFeeMinor) {
   const rateFee = Math.floor(amountMinor * bps / 10000);
@@ -39,7 +40,7 @@ function depositToCard({ db, config, user, cardId, amountMinor }) {
     throw Object.assign(new Error('充值后卡内余额将超过账户的卡面额度。'), { statusCode: 409 });
   }
   return db.transaction(() => {
-    accountTransaction(db, user.id, 'CARD_DEPOSIT', -(amountMinor + fee), `充值到卡片 ${card.id}，手续费 ${(fee / 100).toFixed(2)}`);
+    accountTransaction(db, user.id, 'CARD_DEPOSIT', -(amountMinor + fee), `充值到卡片 ${formatCardLabel(card)}，手续费 ${(fee / 100).toFixed(2)}`);
     const nextCardBalance = card.balanceMinor + amountMinor;
     db.prepare('UPDATE cards SET balance_minor = ?, updated_at = ? WHERE id = ?').run(nextCardBalance, Date.now(), card.id);
     db.prepare(`
@@ -68,7 +69,7 @@ function withdrawFromCard({ db, config, user, cardId, amountMinor }) {
       INSERT INTO card_transactions (card_id, order_id, type, amount_minor, balance_after_minor, note, created_at)
       VALUES (?, NULL, 'DEBIT', ?, ?, ?, ?)
     `).run(card.id, amountMinor, nextCardBalance, `提现到账户，手续费 ${(fee / 100).toFixed(2)}`, Date.now());
-    const accountBalance = accountTransaction(db, user.id, 'CARD_WITHDRAW', credited, `卡片 ${card.id} 提现，手续费 ${(fee / 100).toFixed(2)}`);
+    const accountBalance = accountTransaction(db, user.id, 'CARD_WITHDRAW', credited, `${formatCardLabel(card)} 提现，手续费 ${(fee / 100).toFixed(2)}`);
     return { fee, credited, accountBalanceMinor: accountBalance, cardBalanceMinor: nextCardBalance };
   })();
 }

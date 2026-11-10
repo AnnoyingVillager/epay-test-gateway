@@ -23,7 +23,8 @@ const {
 const {
   validUserCredentials,
   createSession,
-  setSessionCookie
+  setSessionCookie,
+  clearSessionCookie
 } = require('./admin-auth');
 const { timingSafeEqualText } = require('./crypto');
 
@@ -280,6 +281,11 @@ function router({ db, config, notification }) {
     } catch (error) {
       next(error);
     }
+  });
+
+  route.get('/pay/:tradeNo/logout', (req, res) => {
+    clearSessionCookie(res);
+    return res.redirect(303, `/pay/${encodeURIComponent(req.params.tradeNo)}`);
   });
 
   route.post('/pay/:tradeNo/bind', (req, res, next) => {

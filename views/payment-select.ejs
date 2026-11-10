@@ -5,7 +5,10 @@
       <span class="brand-mark">E</span>
       <span><strong>Epay</strong><small>Secure Test Checkout</small></span>
     </a>
-    <span class="test-badge">SELECT PAYMENT</span>
+    <div class="checkout-header-actions">
+      <span class="test-badge">SELECT PAYMENT</span>
+      <% if (currentUser) { %><a class="text-link" href="/pay/<%= encodeURIComponent(order.tradeNo) %>/logout">退出当前账号</a><% } %>
+    </div>
   </header>
 
   <section class="checkout-card">
@@ -42,7 +45,7 @@
           <label class="field"><span>可用卡片</span>
             <select name="card_id" required>
               <% userCards.forEach((card) => { %>
-                <option value="<%= card.id %>"><%= card.binName %> (<%= card.cardType === 'credit' ? '信用卡' : '借记卡' %>) <%= card.binPrefix %>***<%= card.last4 %></option>
+                <option value="<%= card.id %>"><%= formatCardLabel(card) %></option>
               <% }) %>
             </select>
           </label>
@@ -52,7 +55,7 @@
       <% } else { %>
         <div class="empty-state compact">当前账号还没有虚拟卡。<a class="text-link" href="/admin/cards/new">先创建一张虚拟卡</a></div>
       <% } %>
-      <p class="form-hint">登录身份不对时，可以<a class="text-link" href="/admin/logout">退出当前账号</a>后使用其他账号重新登录。</p>
+      <p class="form-hint">需要他人代付或登录身份不对时，可以<a class="text-link" href="/pay/<%= encodeURIComponent(order.tradeNo) %>/logout">退出当前账号</a>后切换账号。</p>
     </div>
   </section>
 

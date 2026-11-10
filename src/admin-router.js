@@ -305,7 +305,7 @@ function router({ db, config, notification, logger }) {
       params.push(req.user.id);
     }
     if (allowedCardStatuses.has(status)) { conditions.push('c.status = ?'); params.push(status); }
-    if (search) { conditions.push('(c.id LIKE ? OR c.last4 LIKE ?)'); params.push(`%${search}%`, `%${search}%`); }
+    if (search) { conditions.push('(c.id LIKE ? OR c.last4 LIKE ? OR b.prefix LIKE ?)'); params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const cards = db.prepare(`
       SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, b.require_3ds AS bin_require_3ds,
@@ -519,7 +519,7 @@ function router({ db, config, notification, logger }) {
     if (result.status === 'in-use') {
       return redirectMessage(res, `/admin/cards/${result.cardId}`, 'error', `该卡仍有 ${result.pendingOrderCount} 个进行中或待结算订单，不能删除。`);
     }
-    return redirectMessage(res, '/admin/cards', 'ok', `虚拟卡 ${result.cardId} 已删除。`);
+    return redirectMessage(res, '/admin/cards', 'ok', '虚拟卡已删除。');
   });
 
   route.get('/orders', (req, res) => {

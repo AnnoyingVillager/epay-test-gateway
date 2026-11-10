@@ -4,7 +4,7 @@
   <div class="toolbar">
     <form method="get" action="/admin/cards" class="filter-form">
       <label class="field inline-field"><span>状态</span><select name="status"><option value="">全部</option><option value="active" <%= status === 'active' ? 'selected' : '' %>>可支付</option><option value="declined" <%= status === 'declined' ? 'selected' : '' %>>模拟拒付</option><option value="frozen" <%= status === 'frozen' ? 'selected' : '' %>>已冻结</option></select></label>
-      <label class="field inline-field"><span>搜索</span><input name="q" value="<%= search %>" placeholder="卡 ID 或尾号"></label>
+      <label class="field inline-field"><span>搜索</span><input name="q" value="<%= search %>" placeholder="BIN 前缀、尾号或卡 ID"></label>
       <button class="button button-ghost button-small" type="submit">筛选</button>
     </form>
     <a class="button button-primary" href="/admin/cards/new">+ 创建虚拟卡</a>
@@ -18,8 +18,8 @@
       <tbody>
       <% cards.forEach((card) => { %>
         <tr>
-          <td><div class="table-primary"><span class="mini-card"><%= card.brand.slice(0, 1) %></span><span><strong><%= card.id %></strong><small>•••• <%= card.last4 %></small></span></div></td>
-          <td><%= card.binName %><br><small><code><%= card.binPrefix %></code></small></td>
+          <td><div class="table-primary"><span class="mini-card"><%= card.brand.slice(0, 1) %></span><span><strong><%= formatCardShort(card) %></strong><small><%= card.binName %></small></span></div></td>
+          <td><%= card.binName %><br><small><%= card.cardType === 'credit' ? '信用卡' : '借记卡' %></small></td>
           <% if (isAdmin) { %><td><%= card.ownerUsername || '未分配' %></td><% } %>
           <td><strong><%= card.currency %> <%= formatMinor(card.balanceMinor) %></strong></td>
           <td><span class="pill <%= card.status === 'active' ? 'pill-success' : 'pill-danger' %>"><%= statusLabel(card.status) %></span></td>

@@ -83,8 +83,8 @@
 <section class="panel">
   <div class="panel-head"><div><p class="eyebrow">CARDS</p><h2>名下虚拟卡</h2></div><span class="count-badge"><%= cards.length %></span></div>
   <% if (!cards.length) { %><div class="empty-state compact">该用户暂无虚拟卡。</div><% } else { %>
-    <div class="table-wrap"><table><thead><tr><th>卡 ID</th><th>BIN</th><th>类型</th><th>余额</th><th>状态</th><th></th></tr></thead><tbody>
-      <% cards.forEach((card) => { %><tr><td><code><%= card.id %></code></td><td><%= card.binName %> · <%= card.binPrefix %></td><td><%= card.cardType %></td><td>CNY <%= formatMinor(card.balanceMinor) %></td><td><%= statusLabel(card.status) %></td><td class="align-right"><a class="button button-ghost button-small" href="/admin/cards/<%= card.id %>">管理</a></td></tr><% }) %>
+    <div class="table-wrap"><table><thead><tr><th>卡片</th><th>BIN</th><th>类型</th><th>余额</th><th>状态</th><th></th></tr></thead><tbody>
+      <% cards.forEach((card) => { %><tr><td><code><%= formatCardShort(card) %></code></td><td><%= card.binName %></td><td><%= card.cardType === 'credit' ? '信用卡' : '借记卡' %></td><td>CNY <%= formatMinor(card.balanceMinor) %></td><td><%= statusLabel(card.status) %></td><td class="align-right"><a class="button button-ghost button-small" href="/admin/cards/<%= card.id %>">管理</a></td></tr><% }) %>
     </tbody></table></div>
   <% } %>
 </section>

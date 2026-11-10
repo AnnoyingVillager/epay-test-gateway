@@ -386,6 +386,8 @@ test('group BIN access, account transfers, super risk lock and archived UID work
 
   response = await admin.get(`/admin/users/${user.uid}`);
   assert.equal(response.status, 200, response.text);
+  assert.match(response.text, new RegExp(`<code>411111\\*\\*\\*${defaultCard.last4}</code>`));
+  assert.doesNotMatch(response.text, new RegExp(`<td><code>${defaultCardId}</code></td>`));
   csrf = csrfFrom(response.text);
   response = await admin.post(`/admin/users/${user.uid}/update`).type('form').send({
     _csrf: csrf,
@@ -430,17 +432,31 @@ test('group BIN access, account transfers, super risk lock and archived UID work
   assert.match(response.text, /data-confirm-dialog/);
   assert.match(response.text, /data-confirm-title="确认充值到虚拟卡"/);
   assert.match(response.text, /data-confirm-title="确认提现到账户"/);
+  assert.match(response.text, new RegExp(`Default only（借记卡） 411111\\*\\*\\*${defaultCard.last4}`));
+  assert.doesNotMatch(response.text, new RegExp(`<option value="${defaultCardId}">${defaultCardId}`));
   csrf = csrfFrom(response.text);
   response = await userAgent.post('/admin/account/deposit').type('form').send({ _csrf: csrf, card_id: defaultCardId, amount: '100.00' });
   assert.equal(response.status, 302);
   assert.match(response.headers.location, /ok=/);
   assert.equal(db.prepare('SELECT account_balance_minor FROM users WHERE id = ?').get(user.id).account_balance_minor, 89900);
   assert.equal(db.prepare('SELECT balance_minor FROM cards WHERE id = ?').get(defaultCardId).balance_minor, 80000);
+  let depositTransaction = db.prepare("SELECT note FROM account_transactions WHERE user_id = ? AND type = 'CARD_DEPOSIT' ORDER BY id DESC LIMIT 1").get(user.id);
+  assert.match(depositTransaction.note, new RegExp(`Default only（借记卡） 411111\\*\\*\\*${defaultCard.last4}`));
+  assert.doesNotMatch(depositTransaction.note, new RegExp(defaultCardId));
 
   response = await userAgent.post('/admin/account/withdraw').type('form').send({ _csrf: csrf, card_id: defaultCardId, amount: '50.00' });
   assert.equal(response.status, 302);
   assert.equal(db.prepare('SELECT account_balance_minor FROM users WHERE id = ?').get(user.id).account_balance_minor, 94850);
   assert.equal(db.prepare('SELECT balance_minor FROM cards WHERE id = ?').get(defaultCardId).balance_minor, 75000);
+  let withdrawTransaction = db.prepare("SELECT note FROM account_transactions WHERE user_id = ? AND type = 'CARD_WITHDRAW' ORDER BY id DESC LIMIT 1").get(user.id);
+  assert.match(withdrawTransaction.note, new RegExp(`Default only（借记卡） 411111\\*\\*\\*${defaultCard.last4}`));
+  assert.doesNotMatch(withdrawTransaction.note, new RegExp(defaultCardId));
+
+  accountTransaction(db, user.id, 'LEGACY_CARD_REFERENCE', 0, `历史卡片 ${defaultCardId} 流水`);
+  response = await userAgent.get('/admin/account');
+  assert.equal(response.status, 200);
+  assert.match(response.text, new RegExp(`历史卡片 Default only（借记卡） 411111\\*\\*\\*${defaultCard.last4} 流水`));
+  assert.doesNotMatch(response.text, new RegExp(`历史卡片 ${defaultCardId} 流水`));
 
   response = await request(app).get('/api.php').query(signedOrderParams('v2-merchant-key', {
     money: '5.00',

@@ -138,6 +138,7 @@ small { color: var(--ink-faint); }
 .checkout-page { min-height: 100vh; background: radial-gradient(circle at 12% 10%, #dff5ef 0, transparent 34%), radial-gradient(circle at 92% 90%, #e7edf8 0, transparent 32%), #eef3f5; }
 .checkout-shell { width: min(1020px, calc(100% - 36px)); margin: 0 auto; padding: 24px 0 55px; }
 .checkout-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 0 30px; }
+.checkout-header-actions { display: flex; align-items: center; gap: 12px; }
 .test-badge { font-family: var(--mono); font-size: .65rem; letter-spacing: .12em; color: #6557a7; border: 1px solid #d5cef1; background: #f3f0ff; border-radius: 999px; padding: 6px 10px; }
 .checkout-card { display: grid; grid-template-columns: .82fr 1.18fr; border-radius: 24px; background: #fff; box-shadow: 0 30px 80px rgba(13, 42, 55, .12); overflow: hidden; border: 1px solid rgba(255,255,255,.8); }
 .checkout-summary { background: var(--navy); color: #fff; padding: 44px; position: relative; overflow: hidden; }

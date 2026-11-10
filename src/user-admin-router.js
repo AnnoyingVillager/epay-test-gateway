@@ -4,6 +4,7 @@ const { hashPassword } = require('./crypto');
 const { accountTransaction, depositToCard, withdrawFromCard } = require('./account-service');
 const { invitePermissionStatus, canUseInvites, replaceInviteCode, inviteTopology, validateCustomInviteCode } = require('./invite-service');
 const { effectiveSpendLimit, spentMinor } = require('./order-service');
+const { maskCardReferences } = require('./card-format');
 
 function integer(value, min = 0, max = Number.MAX_SAFE_INTEGER) { const parsed = Number.parseInt(value, 10); return Number.isFinite(parsed) && parsed >= min && parsed <= max ? parsed : null; }
 function moneyInput(value, allowZero = true) { const raw = String(value ?? '').trim(); if (!/^\d{1,10}(?:\.\d{1,2})?$/.test(raw)) return null; const [whole, decimals = ''] = raw.split('.'); const minor = Number(whole) * 100 + Number(decimals.padEnd(2, '0')); return Number.isSafeInteger(minor) && (allowZero || minor > 0) ? minor : null; }
@@ -17,7 +18,8 @@ function router({ db, config, adminOnly }) {
   route.get('/account', (req, res) => {
     const user = userById(db, req.user.id);
     const cards = db.prepare(`SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, b.require_3ds AS bin_require_3ds, u.username AS owner_username, u.uid AS owner_uid FROM cards c JOIN bins b ON b.id = c.bin_id LEFT JOIN users u ON u.id = c.owner_user_id WHERE c.owner_user_id = ? ORDER BY c.created_at DESC`).all(user.id).map((row) => mapCard(row, config.appSecret, false));
-    const transactions = db.prepare('SELECT * FROM account_transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT 100').all(user.id);
+    const transactions = db.prepare('SELECT * FROM account_transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT 100').all(user.id)
+      .map((transaction) => ({ ...transaction, note: maskCardReferences(transaction.note, cards) }));
     const effectiveLimitMinor = effectiveSpendLimit(db, user.id);
     const spentMinorValue = spentMinor(db, user.id);
     res.render('admin/account', { title: '我的账户', user, cards, transactions, effectiveLimitMinor, spentMinor: spentMinorValue, settings: getAllSettings(db) });
@@ -159,7 +161,8 @@ function router({ db, config, adminOnly }) {
     if (!user || user.deletedAt) return res.status(404).render('error', { title: '用户不存在', message: '未找到该 UID 对应的有效用户。', statusCode: 404 });
     const topology = inviteTopology(db, user);
     const cards = db.prepare(`SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, b.require_3ds AS bin_require_3ds, u.username AS owner_username, u.uid AS owner_uid FROM cards c JOIN bins b ON b.id = c.bin_id LEFT JOIN users u ON u.id = c.owner_user_id WHERE c.owner_user_id = ? ORDER BY c.created_at DESC`).all(user.id).map((row) => mapCard(row, config.appSecret, false));
-    const transactions = db.prepare('SELECT * FROM account_transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT 100').all(user.id);
+    const transactions = db.prepare('SELECT * FROM account_transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT 100').all(user.id)
+      .map((transaction) => ({ ...transaction, note: maskCardReferences(transaction.note, cards) }));
     const riskEvents = db.prepare('SELECT * FROM risk_events WHERE user_id = ? ORDER BY created_at DESC LIMIT 50').all(user.id);
     const effectiveLimitMinor = effectiveSpendLimit(db, user.id);
     const spentMinorValue = spentMinor(db, user.id);

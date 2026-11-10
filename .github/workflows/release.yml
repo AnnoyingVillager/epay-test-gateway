@@ -2,6 +2,7 @@ name: Publish GitHub release
 
 on:
   push:
+    branches: [main]
     tags: ['v*']
 
 permissions:
@@ -11,18 +12,41 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            RELEASE_VERSION=$(node -p "require('./package.json').version")
+            echo "tag=v${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create release from tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "Release $GITHUB_REF_NAME already exists; nothing to do."
+          TAG="${{ steps.release.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; nothing to do."
             exit 0
           fi
-          gh release create "$GITHUB_REF_NAME" \
-            --verify-tag \
-            --generate-notes \
-            --latest \
-            --title "$GITHUB_REF_NAME"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            gh release create "$TAG" \
+              --verify-tag \
+              --generate-notes \
+              --latest \
+              --title "$TAG"
+          else
+            gh release create "$TAG" \
+              --target "$GITHUB_SHA" \
+              --generate-notes \
+              --latest \
+              --title "$TAG"
+          fi

@@ -402,6 +402,9 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   const adminCardId = decodeURIComponent(response.headers.location.split('/admin/cards/')[1].split('?')[0]);
   const adminCard = appBundle.db.prepare('SELECT * FROM cards WHERE id = ?').get(adminCardId);
   assert.equal(adminCard.owner_user_id, rootAdmin.id);
+  response = await admin.get(`/admin/cards/${adminCardId}`);
+  assert.equal(response.status, 200);
+  assert.match(response.text, new RegExp(adminCardId));
 
   const user = request.agent(appBundle.app);
   response = await user.post('/admin/login').type('form').send({ username: 'normal-user', password: 'normal-password' });
@@ -413,7 +416,9 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   assert.match(response.text, /我的仪表盘/);
   response = await user.get('/admin/cards');
   assert.equal(response.status, 200);
-  assert.match(response.text, new RegExp(cardId));
+  const listedCard = appBundle.db.prepare('SELECT * FROM cards WHERE id = ?').get(cardId);
+  assert.match(response.text, new RegExp(`<strong>553311\\*\\*\\*${listedCard.last4}</strong>`));
+  assert.doesNotMatch(response.text, new RegExp(`<strong>${cardId}</strong>`));
   for (const path of ['/admin/bins', '/admin/users', '/admin/merchants', '/admin/settings']) {
     response = await user.get(path);
     assert.equal(response.status, 403, path);
@@ -555,9 +560,9 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   response = await admin.get(`/pay/${loginBindingTradeNo}`);
   assert.equal(response.status, 200);
   assert.doesNotMatch(response.text, /name="card_number"/);
-  const adminCardOption = new RegExp(`<option value="${adminCardId}">Roles Test BIN \\(借记卡\\) 553311\\*\\*\\*${adminCard.last4}</option>`);
+  const adminCardOption = `<option value="${adminCardId}">Roles Test BIN（借记卡） 553311***${adminCard.last4}</option>`;
   const normalUserCardOption = new RegExp(`<option value="${cardId}">`);
-  assert.match(response.text, adminCardOption);
+  assert.ok(response.text.includes(adminCardOption));
   assert.doesNotMatch(response.text, normalUserCardOption);
   response = await admin.post(`/pay/${loginBindingTradeNo}/bind`).type('form').send({ card_id: cardId });
   assert.equal(response.status, 403);
@@ -578,8 +583,8 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   assert.match(response.text, /选择我的虚拟卡/);
   assert.doesNotMatch(response.text, /name="card_number"/);
   assert.doesNotMatch(response.text, /使用银行卡信息绑卡/);
-  const userCardOption = new RegExp(`<option value="${userCreatedCardId}">Roles Test BIN \\(借记卡\\) 553311\\*\\*\\*${userCreatedCard.last4}</option>`);
-  assert.match(response.text, userCardOption);
+  const userCardOption = `<option value="${userCreatedCardId}">Roles Test BIN（借记卡） 553311***${userCreatedCard.last4}</option>`;
+  assert.ok(response.text.includes(userCardOption));
   assert.doesNotMatch(response.text, new RegExp(`<option value="${userCreatedCardId}">${userCreatedCardId}`));
   response = await payingUser.post(`/pay/${loginBindingTradeNo}/bind`).type('form').send({
     card_number: cardSecrets.cardNumber,
@@ -592,6 +597,25 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   response = await payingUser.post(`/pay/${loginBindingTradeNo}/bind`).type('form').send({ card_id: userCreatedCardId });
   assert.equal(response.status, 303);
   assert.equal(appBundle.db.prepare('SELECT card_id FROM orders WHERE trade_no = ?').get(loginBindingTradeNo).card_id, userCreatedCardId);
+  response = await payingUser.get(`/pay/${loginBindingTradeNo}`);
+  assert.equal(response.status, 200);
+  assert.match(response.text, /退出当前账号/);
+  assert.match(response.text, new RegExp(`/pay/${loginBindingTradeNo}/logout`));
+
+  const delegatedPayer = request.agent(appBundle.app);
+  response = await delegatedPayer.post(`/pay/${loginBindingTradeNo}/login`).type('form').send({
+    username: 'normal-user',
+    password: 'normal-password'
+  });
+  assert.equal(response.status, 303);
+  response = await delegatedPayer.get(`/pay/${loginBindingTradeNo}/logout`);
+  assert.equal(response.status, 303);
+  assert.equal(response.headers.location, `/pay/${loginBindingTradeNo}`);
+  assert.match(response.headers['set-cookie'][0], /Max-Age=0/);
+  const delegatedOrder = appBundle.db.prepare('SELECT id FROM orders WHERE trade_no = ?').get(loginBindingTradeNo);
+  response = await admin.get(`/admin/orders/${delegatedOrder.id}`);
+  assert.equal(response.status, 200);
+  assert.match(response.text, new RegExp(userCreatedCardId));
 
   const no3dsParams = signedOrderParams('roles-merchant-key', {
     notify_url: `${callbackBase}/notify`,

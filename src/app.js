@@ -11,6 +11,7 @@ const adminRouter = require('./admin-router');
 const registrationRouter = require('./registration-router');
 const { Mailer } = require('./mailer');
 const { formatMinor } = require('./epay');
+const { formatCardShort, formatCardLabel } = require('./card-format');
 const { version: appVersion } = require('../package.json');
 
 function createApp(options) {
@@ -44,6 +45,8 @@ function createApp(options) {
     PENDING: '待支付', PAID: '已完成', EXPIRED: '已超时', FAILED: '支付失败', CHARGEBACK: '已拒付/退单',
     SENT: '已送达', NONE: '未回调'
   })[status] || status;
+  app.locals.formatCardShort = formatCardShort;
+  app.locals.formatCardLabel = formatCardLabel;
 
   app.use(helmet({
     contentSecurityPolicy: {
