@@ -16,6 +16,7 @@
 - 借记卡支付后即时结算且不可退款；信用卡与账户余额支付在担保期内可原路退款
 - 订单绑卡：已绑定订单只接受指定虚拟卡；未登录时可通过卡号、有效期和 CVV 直接绑卡，登录后只能从本人名下卡片中选择；管理员和普通用户均适用
 - 支付页为登录用户提供退出入口，退出后返回当前订单，便于切换账号代付
+- 待支付订单在进入 3DS 或确认支付页后仍可返回并重新选择支付方式；退出登录会同时清除当前选卡
 - 卡列表使用 `BIN 前缀***尾号`，账户与卡片互转使用 `BIN 名称（卡类型） 前缀***尾号`；完整卡片 ID 仅保留在卡片详情、订单详情和商户接口中
 - 3DS 验证按卡 BIN 独立开关；关闭后支付确认无需输入 3DS 密码
 - 管理员可开启“自动成功模式”，让所有通过签名校验的支付请求直接完成，并立即返回 Epay 成功参数
@@ -34,7 +35,7 @@
 ## 已发布镜像
 
 - `ghcr.io/annoyingvillager/epay-test-gateway:latest`
-- `ghcr.io/annoyingvillager/epay-test-gateway:2.2.4` 和 `:2.2`（对应 Git 标签 `v2.2.4`）
+- `ghcr.io/annoyingvillager/epay-test-gateway:2.2.5` 和 `:2.2`（对应 Git 标签 `v2.2.5`）
 - 同时提供 `linux/amd64` 与 `linux/arm64` 多架构镜像
 
 ## 无需克隆源码部署
@@ -443,8 +444,8 @@ git add .
 git commit -m "feat: add Epay test gateway"
 gh auth login
 gh repo create epay-test-gateway --public --source=. --remote=origin --push
-git tag v2.2.4
-git push origin v2.2.4
+git tag v2.2.5
+git push origin v2.2.5
 ```
 
 首次使用 GHCR 时，Actions 使用仓库的 `GITHUB_TOKEN` 推送。部署机器拉取公开镜像：

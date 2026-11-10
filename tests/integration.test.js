@@ -524,6 +524,20 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   response = await request(appBundle.app).get(`/pay/${submitTradeNo}`);
   assert.equal(response.status, 200);
   assert.match(response.text, /绑定的虚拟银行卡/);
+  assert.match(response.text, /返回并重新选择支付方式/);
+  assert.match(response.text, new RegExp(`/pay/${submitTradeNo}/change-payment`));
+  response = await request(appBundle.app).post(`/pay/${submitTradeNo}/change-payment`);
+  assert.equal(response.status, 303);
+  assert.equal(appBundle.db.prepare('SELECT card_id FROM orders WHERE trade_no = ?').get(submitTradeNo).card_id, null);
+  response = await request(appBundle.app).get(`/pay/${submitTradeNo}`);
+  assert.equal(response.status, 200);
+  assert.match(response.text, /使用银行卡信息绑卡/);
+  response = await request(appBundle.app).post(`/pay/${submitTradeNo}/bind`).type('form').send({
+    card_number: cardSecrets.cardNumber,
+    expiry: cardExpiry,
+    cvv: cardSecrets.cvv
+  });
+  assert.equal(response.status, 303);
   response = await request(appBundle.app).get('/js/payment.js');
   assert.equal(response.status, 200);
   assert.match(response.text, /正在处理支付/);
@@ -535,6 +549,9 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   assert.equal(response.status, 303);
   assert.match(response.headers.location, /trade_status=TRADE_SUCCESS/);
   assert.equal(appBundle.db.prepare('SELECT balance_minor FROM cards WHERE id = ?').get(cardId).balance_minor, 7766);
+  response = await request(appBundle.app).post(`/pay/${submitTradeNo}/change-payment`);
+  assert.equal(response.status, 303);
+  assert.equal(appBundle.db.prepare('SELECT card_id FROM orders WHERE trade_no = ?').get(submitTradeNo).card_id, cardId);
   response = await admin.get('/admin/orders/live');
   assert.equal(response.status, 200);
   assert.notEqual(response.body.fingerprint, initialOrderFingerprint);
@@ -601,6 +618,15 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   assert.equal(response.status, 200);
   assert.match(response.text, /退出当前账号/);
   assert.match(response.text, new RegExp(`/pay/${loginBindingTradeNo}/logout`));
+  assert.match(response.text, /返回并重新选择支付方式/);
+  response = await payingUser.post(`/pay/${loginBindingTradeNo}/change-payment`);
+  assert.equal(response.status, 303);
+  assert.equal(appBundle.db.prepare('SELECT card_id FROM orders WHERE trade_no = ?').get(loginBindingTradeNo).card_id, null);
+  response = await payingUser.get(`/pay/${loginBindingTradeNo}`);
+  assert.equal(response.status, 200);
+  assert.match(response.text, /选择我的虚拟卡/);
+  response = await payingUser.post(`/pay/${loginBindingTradeNo}/bind`).type('form').send({ card_id: userCreatedCardId });
+  assert.equal(response.status, 303);
 
   const delegatedPayer = request.agent(appBundle.app);
   response = await delegatedPayer.post(`/pay/${loginBindingTradeNo}/login`).type('form').send({
@@ -612,10 +638,11 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   assert.equal(response.status, 303);
   assert.equal(response.headers.location, `/pay/${loginBindingTradeNo}`);
   assert.match(response.headers['set-cookie'][0], /Max-Age=0/);
+  assert.equal(appBundle.db.prepare('SELECT card_id FROM orders WHERE trade_no = ?').get(loginBindingTradeNo).card_id, null);
   const delegatedOrder = appBundle.db.prepare('SELECT id FROM orders WHERE trade_no = ?').get(loginBindingTradeNo);
   response = await admin.get(`/admin/orders/${delegatedOrder.id}`);
   assert.equal(response.status, 200);
-  assert.match(response.text, new RegExp(userCreatedCardId));
+  assert.match(response.text, /未绑定/);
 
   const no3dsParams = signedOrderParams('roles-merchant-key', {
     notify_url: `${callbackBase}/notify`,

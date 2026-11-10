@@ -172,6 +172,7 @@ small { color: var(--ink-faint); }
 .card-meta { display: flex; text-align: center; justify-content: space-between; align-items: center; gap: 12px; font-size: .73rem; color: var(--ink-soft); margin: 14px 2px 25px; }
 .pay-form { margin-top: 30px; }
 .pay-form .field { margin-bottom: 16px; }
+.payment-method-back { margin-top: 12px; }
 .secure-note { color: var(--ink-faint); font-size: .7rem; text-align: center; margin: 12px 0 0; }
 .payment-state { margin-top: 30px; padding: 18px; border-radius: 12px; background: var(--surface-2); }
 .payment-state p { color: var(--ink-soft); font-size: .82rem; margin: 5px 0 12px; }

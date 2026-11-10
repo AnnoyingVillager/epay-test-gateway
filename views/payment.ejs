@@ -71,6 +71,10 @@
           </button>
           <p class="secure-note">此页面仅允许使用订单绑定的虚拟卡。不会产生真实资金交易。</p>
         </form>
+        <form method="post" action="/pay/<%= encodeURIComponent(order.tradeNo) %>/change-payment" class="stack-form payment-method-back" data-payment-submit>
+          <button class="button button-ghost button-block" type="submit">返回并重新选择支付方式</button>
+          <p class="form-hint">支付完成前，可返回重新选择账户余额或其他虚拟卡。</p>
+        </form>
       <% } else { %>
         <div class="payment-state payment-state-<%= order.status.toLowerCase() %>">
           <strong><%= statusLabel(order.status) %></strong>

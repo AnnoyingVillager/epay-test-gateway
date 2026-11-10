@@ -284,8 +284,26 @@ function router({ db, config, notification }) {
   });
 
   route.get('/pay/:tradeNo/logout', (req, res) => {
+    const order = loadOrder(req, res);
+    if (!order) return;
     clearSessionCookie(res);
+    if (order.status === 'PENDING') {
+      db.prepare("UPDATE orders SET card_id = NULL WHERE id = ? AND status = 'PENDING'").run(order.id);
+    }
     return res.redirect(303, `/pay/${encodeURIComponent(req.params.tradeNo)}`);
+  });
+
+  route.post('/pay/:tradeNo/change-payment', (req, res, next) => {
+    try {
+      const order = loadOrder(req, res);
+      if (!order) return;
+      if (order.status === 'PENDING') {
+        db.prepare("UPDATE orders SET card_id = NULL WHERE id = ? AND status = 'PENDING'").run(order.id);
+      }
+      return res.redirect(303, `/pay/${encodeURIComponent(order.tradeNo)}`);
+    } catch (error) {
+      next(error);
+    }
   });
 
   route.post('/pay/:tradeNo/bind', (req, res, next) => {
