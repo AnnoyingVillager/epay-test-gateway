@@ -1,9 +1,9 @@
 const express = require('express');
-const { getSetting, getAllSettings, mapUser, mapCard, userByUid, userById, uniqueInviteCode, nextUid, isUsernameReserved } = require('./db');
+const { getSetting, getAllSettings, mapUser, mapCard, cardById, userByUid, userById, uniqueInviteCode, nextUid, isUsernameReserved } = require('./db');
 const { hashPassword, verifyPassword } = require('./crypto');
 const { validateNewPassword } = require('./password-service');
 const { clearSessionCookie } = require('./admin-auth');
-const { accountTransaction, depositToCard, withdrawFromCard } = require('./account-service');
+const { accountTransaction, depositToCard, withdrawFromCard, internalTransfer, cancelOwnCard, unfreezeCard } = require('./account-service');
 const { invitePermissionStatus, canUseInvites, replaceInviteCode, inviteTopology, validateCustomInviteCode } = require('./invite-service');
 const { effectiveSpendLimit, spentMinor } = require('./order-service');
 const { maskCardReferences } = require('./card-format');
@@ -22,7 +22,7 @@ function router({ db, config, adminOnly, superAdminOnly }) {
     return res.status(403).render('error', {
       title: '没有访问权限',
       message: target?.role === 'admin'
-        ? '普通管理员不能修改其他管理员账号。'
+        ? '管理员不能修改其他管理员账号。'
         : '该账号受超级管理员保护，不能在用户管理中修改。',
       statusCode: 403
     });
@@ -67,6 +67,70 @@ function router({ db, config, adminOnly, superAdminOnly }) {
     if (!cardId || amountMinor === null) return redirectMessage(res, '/admin/account', 'error', '请填写有效的卡片和提现金额。');
     try { const result = withdrawFromCard({ db, config, user: userById(db, req.user.id), cardId, amountMinor }); return redirectMessage(res, '/admin/account', 'ok', `提现成功，到账 ${(result.credited / 100).toFixed(2)}，手续费 ${(result.fee / 100).toFixed(2)}。`); }
     catch (error) { return redirectMessage(res, '/admin/account', 'error', error.message); }
+  });
+
+  route.get('/account/transfer', (req, res) => {
+    const user = userById(db, req.user.id);
+    const cards = db.prepare(`
+      SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, b.require_3ds AS bin_require_3ds,
+        u.username AS owner_username, u.uid AS owner_uid
+      FROM cards c JOIN bins b ON b.id = c.bin_id LEFT JOIN users u ON u.id = c.owner_user_id
+      WHERE c.owner_user_id = ? AND c.currency = 'CNY' ORDER BY c.created_at DESC
+    `).all(user.id).map((row) => mapCard(row, config.appSecret, false));
+    const transfers = db.prepare(`
+      SELECT t.*, su.username AS sender_username, ru.username AS recipient_username,
+        sc.last4 AS source_last4, rc.last4 AS recipient_last4
+      FROM internal_transfers t
+      JOIN users su ON su.id = t.sender_user_id
+      JOIN users ru ON ru.id = t.recipient_user_id
+      LEFT JOIN cards sc ON sc.id = t.source_card_id
+      LEFT JOIN cards rc ON rc.id = t.recipient_card_id
+      WHERE t.sender_user_id = ? OR t.recipient_user_id = ?
+      ORDER BY t.created_at DESC LIMIT 100
+    `).all(user.id, user.id);
+    res.render('admin/transfer', {
+      title: '站内转账', user, cards, transfers, settings: getAllSettings(db),
+      effectiveLimitMinor: effectiveSpendLimit(db, user.id)
+    });
+  });
+
+  route.post('/account/transfer', (req, res) => {
+    const amountMinor = moneyInput(req.body.amount, false);
+    if (amountMinor === null) return redirectMessage(res, '/admin/account/transfer', 'error', '请输入有效的转账金额。');
+    try {
+      const result = internalTransfer({
+        db, config, user: userById(db, req.user.id),
+        sourceType: String(req.body.source || 'account') === 'account' ? 'account' : 'card',
+        sourceCardId: String(req.body.source || ''),
+        recipientCardNumber: req.body.recipient_card_number,
+        recipientUsername: req.body.recipient_username,
+        amountMinor,
+        note: req.body.note
+      });
+      return redirectMessage(res, '/admin/account/transfer', 'ok', `已向 ${result.recipientUsername} 转账 ${(result.amountMinor / 100).toFixed(2)} CNY，手续费 ${(result.fee / 100).toFixed(2)} CNY。流水号 ${result.reference}。`);
+    } catch (error) {
+      return redirectMessage(res, '/admin/account/transfer', 'error', error.message);
+    }
+  });
+
+  route.post('/account/cards/:id/cancel', (req, res) => {
+    try {
+      cancelOwnCard({ db, config, user: userById(db, req.user.id), cardId: req.params.id });
+      return redirectMessage(res, '/admin/account', 'ok', '虚拟卡已注销。');
+    } catch (error) {
+      return redirectMessage(res, '/admin/account', 'error', error.message);
+    }
+  });
+
+  route.post('/account/cards/:id/unfreeze', (req, res) => {
+    const card = cardById(db, config.appSecret, req.params.id, false);
+    if (!card || card.ownerUserId !== req.user.id) return redirectMessage(res, '/admin/account', 'error', '虚拟卡不存在或不属于当前用户。');
+    try {
+      const result = unfreezeCard({ db, card, actor: req.user, selfService: true });
+      return redirectMessage(res, '/admin/account', 'ok', result.fee > 0 ? `卡片已解冻，扣除解冻费 ${(result.fee / 100).toFixed(2)} CNY。` : '卡片已解冻，未收取解冻费。');
+    } catch (error) {
+      return redirectMessage(res, '/admin/account', 'error', error.message);
+    }
   });
 
   route.get('/invite', (req, res) => {
@@ -134,7 +198,7 @@ function router({ db, config, adminOnly, superAdminOnly }) {
 
   route.get('/users', adminOnly, (req, res) => {
     const q = String(req.query.q || '').trim();
-    const users = db.prepare(`SELECT u.*, g.name AS group_name FROM users u LEFT JOIN user_groups g ON g.id = u.group_id WHERE u.deleted_at IS NULL AND (? = '' OR u.username LIKE ? OR CAST(u.uid AS TEXT) = ?) ORDER BY CASE u.role WHEN 'admin' THEN 0 ELSE 1 END, u.created_at DESC`).all(q, `%${q}%`, q).map((row) => {
+    const users = db.prepare(`SELECT u.*, g.name AS group_name FROM users u LEFT JOIN user_groups g ON g.id = u.group_id WHERE u.deleted_at IS NULL AND (? = '' OR u.username LIKE ? OR CAST(u.uid AS TEXT) = ?) ORDER BY u.uid DESC`).all(q, `%${q}%`, q).map((row) => {
       const user = mapUser(row);
       return { ...user, invitePermission: invitePermissionStatus(user, db), canManage: canManageUser(req.user, user) };
     });
@@ -149,7 +213,7 @@ function router({ db, config, adminOnly, superAdminOnly }) {
     const canInvite = postedCheckbox(req.body.can_invite, true);
     const groupId = integer(req.body.group_id, 1) || db.prepare("SELECT id FROM user_groups WHERE name = 'Default'").get().id;
     if (!db.prepare('SELECT id FROM user_groups WHERE id = ?').get(groupId)) return redirectMessage(res, '/admin/users', 'error', '用户分组不存在。');
-    if (role === 'admin' && !isSuperAdmin(req.user)) return redirectMessage(res, '/admin/users', 'error', '只有超级管理员可以创建普通管理员。');
+    if (role === 'admin' && !isSuperAdmin(req.user)) return redirectMessage(res, '/admin/users', 'error', '只有超级管理员可以创建管理员。');
     if (!/^[A-Za-z0-9_.-]{3,32}$/.test(username) || isUsernameReserved(db, username) || password.length < 8 || password.length > 128 || !['admin', 'user'].includes(role)) return redirectMessage(res, '/admin/users', 'error', '用户名已被占用或是保留名称，密码或角色无效。');
     try {
       const now = Date.now();
@@ -194,8 +258,9 @@ function router({ db, config, adminOnly, superAdminOnly }) {
   route.get('/users/:uid', adminOnly, (req, res) => {
     const user = userByUid(db, req.params.uid);
     if (!user || user.deletedAt) return res.status(404).render('error', { title: '用户不存在', message: '未找到该 UID 对应的有效用户。', statusCode: 404 });
+    const protectedAdminProfile = user.role === 'admin' && !isSuperAdmin(req.user);
     const topology = inviteTopology(db, user);
-    const cards = db.prepare(`SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, b.require_3ds AS bin_require_3ds, u.username AS owner_username, u.uid AS owner_uid FROM cards c JOIN bins b ON b.id = c.bin_id LEFT JOIN users u ON u.id = c.owner_user_id WHERE c.owner_user_id = ? ORDER BY c.created_at DESC`).all(user.id).map((row) => mapCard(row, config.appSecret, false));
+    const cards = protectedAdminProfile ? [] : db.prepare(`SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, b.require_3ds AS bin_require_3ds, u.username AS owner_username, u.uid AS owner_uid FROM cards c JOIN bins b ON b.id = c.bin_id LEFT JOIN users u ON u.id = c.owner_user_id WHERE c.owner_user_id = ? ORDER BY c.created_at DESC`).all(user.id).map((row) => mapCard(row, config.appSecret, false));
     const transactions = db.prepare('SELECT * FROM account_transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT 100').all(user.id)
       .map((transaction) => ({ ...transaction, note: maskCardReferences(transaction.note, cards) }));
     const riskEvents = db.prepare('SELECT * FROM risk_events WHERE user_id = ? ORDER BY created_at DESC LIMIT 50').all(user.id);
@@ -213,6 +278,7 @@ function router({ db, config, adminOnly, superAdminOnly }) {
       spentMinor: spentMinorValue,
       invitePermission: invitePermissionStatus(user, db),
       canManage: canManageUser(req.user, user),
+      protectedAdminProfile,
       canSuperRisk: isSuperAdmin(req.user) && user.role === 'user' && !user.superRiskAt,
       canDeleteUser: isSuperAdmin(req.user) && user.role === 'user' && Boolean(user.superRiskAt) && !user.isActive
     });
@@ -249,10 +315,9 @@ function router({ db, config, adminOnly, superAdminOnly }) {
     if (!db.prepare('SELECT id FROM user_groups WHERE id = ?').get(groupId)) return redirectMessage(res, `/admin/users/${user.uid}`, 'error', '用户分组不存在。');
     const accountRisk = ['normal', 'watch', 'blocked'].includes(req.body.account_risk) ? req.body.account_risk : 'normal';
     const cardRisk = ['normal', 'frozen'].includes(req.body.card_risk) ? req.body.card_risk : 'normal';
-    const spendMode = ['inherit', 'unlimited', 'custom'].includes(req.body.spend_limit_mode)
-      ? req.body.spend_limit_mode
-      : (req.body.spend_limit_unlimited === '1' ? 'unlimited' : 'custom');
-    const spendLimit = spendMode === 'inherit' ? null : (spendMode === 'unlimited' ? -1 : moneyInput(req.body.spend_limit, true));
+    const requestedSpendMode = String(req.body.spend_limit_mode || '');
+    const spendMode = requestedSpendMode === 'inherit' ? 'inherit' : 'custom';
+    const spendLimit = spendMode === 'inherit' ? null : (moneyInput(req.body.spend_limit, true) ?? (requestedSpendMode === 'unlimited' ? 0 : null));
     const spendLimitInvalid = spendMode === 'custom' && spendLimit === null;
     const cardLimitUnlimited = req.body.card_balance_limit_unlimited === '1';
     const cardBalanceLimit = cardLimitUnlimited ? null : moneyInput(req.body.card_balance_limit, true);
@@ -263,8 +328,24 @@ function router({ db, config, adminOnly, superAdminOnly }) {
     const disabledReason = String(req.body.disabled_reason || '风险控制').trim().slice(0, 200) || '风险控制';
     if (!groupId || spendLimitInvalid || (!cardLimitUnlimited && cardBalanceLimit === null) || inviteLimit === null) return redirectMessage(res, `/admin/users/${user.uid}`, 'error', '用户参数无效。');
     if (user.uid === 0 && (!isActive || accountRisk === 'blocked')) return redirectMessage(res, `/admin/users/${user.uid}`, 'error', 'UID 0 超级管理员不可禁用或设置为阻断状态。');
-    db.prepare(`UPDATE users SET group_id = ?, account_risk = ?, card_risk = ?, spend_limit_minor = ?, card_balance_limit_minor = ?, invite_limit = ?, invite_permission_mode = ?, can_invite = ?, is_active = ?, disabled_reason = ?, updated_at = ? WHERE id = ?`).run(groupId, accountRisk, cardRisk, spendLimit, cardBalanceLimit, inviteLimit, invitePermissionMode, canInvite, isActive, isActive ? null : disabledReason, Date.now(), user.id);
+    db.prepare(`UPDATE users SET group_id = ?, account_risk = ?, card_risk = ?, spend_limit_mode = ?, spend_limit_minor = ?, card_balance_limit_minor = ?, invite_limit = ?, invite_permission_mode = ?, can_invite = ?, is_active = ?, disabled_reason = ?, updated_at = ? WHERE id = ?`).run(groupId, accountRisk, cardRisk, spendMode, spendLimit, cardBalanceLimit, inviteLimit, invitePermissionMode, canInvite, isActive, isActive ? null : disabledReason, Date.now(), user.id);
     return redirectMessage(res, `/admin/users/${user.uid}`, 'ok', '用户配置已更新。');
+  });
+
+  route.post('/users/:uid/role', superAdminOnly, (req, res) => {
+    const user = userByUid(db, req.params.uid);
+    if (!user || user.deletedAt) return redirectMessage(res, '/admin/users', 'error', '用户不存在。');
+    if (Number(user.uid) === 0) return redirectMessage(res, '/admin/users/0', 'error', 'UID 0 超级管理员不可降级。');
+    const role = String(req.body.role || '');
+    if (!['admin', 'user'].includes(role)) return redirectMessage(res, `/admin/users/${user.uid}`, 'error', '用户角色无效。');
+    if (role === user.role) return redirectMessage(res, `/admin/users/${user.uid}`, 'ok', '用户角色未发生变化。');
+    db.transaction(() => {
+      const inviteLimit = role === 'admin' ? 2147483647 : (user.inviteLimit > 1000000 ? settingInt(db, 'invite_default_limit', 10) : user.inviteLimit);
+      db.prepare('UPDATE users SET role = ?, invite_limit = ?, updated_at = ? WHERE id = ?').run(role, inviteLimit, Date.now(), user.id);
+      db.prepare('INSERT INTO risk_events (user_id, user_uid, actor_uid, event, details, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(user.id, user.uid, req.user.uid, 'ROLE_CHANGED', `角色已调整为${role === 'admin' ? '管理员' : '普通用户'}`, Date.now());
+    })();
+    return redirectMessage(res, `/admin/users/${user.uid}`, 'ok', `用户 ${user.username} 已${role === 'admin' ? '升级为管理员' : '降级为普通用户'}。`);
   });
 
   route.post('/users/:uid/invite-permission', adminOnly, (req, res) => {

@@ -24,12 +24,16 @@
           <input type="hidden" name="reason" value="模拟拒付">
           <button class="button <%= card.status === 'declined' ? 'button-primary' : 'button-danger' %>" type="submit"><%= card.status === 'declined' ? '恢复可支付' : '模拟拒付' %></button>
         </form>
-        <form method="post" action="/admin/cards/<%= card.id %>/delete" data-confirm="确认删除该虚拟卡？仅余额为 0 且无进行中订单的卡片可以删除。">
+        <% if (card.status === 'frozen') { %><form method="post" action="/admin/cards/<%= card.id %>/unfreeze" data-confirm="管理员解冻不计费。确认解冻该卡？"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-primary" type="submit">管理员解冻</button></form><% } %>
+        <form method="post" action="/admin/cards/<%= card.id %>/delete" data-confirm="确认强制删除该虚拟卡？系统会忽略余额和冻结/拒付状态，进行中的 PENDING 订单会置为失败；存在未结算信用卡订单时仍会阻止删除。">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <button class="button button-danger" type="submit">删除虚拟卡</button>
+          <button class="button button-danger" type="submit">强制删除虚拟卡</button>
         </form>
+      <% } else { %>
+        <% if (card.status === 'frozen') { %><form method="post" action="/admin/account/cards/<%= card.id %>/unfreeze" data-confirm="确认自助解冻？解冻手续费将按卡 BIN 或全局设置从账户余额扣除；透支卡免收解冻费。"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-primary" type="submit">自助解冻</button></form><% } %>
+        <form method="post" action="/admin/account/cards/<%= card.id %>/cancel" data-confirm="确认注销该虚拟卡？仅余额为 0、未冻结且无进行中订单时才能注销。"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-danger" type="submit">注销虚拟卡</button></form>
       <% } %>
-      <a class="button button-ghost" href="/admin/orders?q=<%= encodeURIComponent(card.id) %>">查看卡片订单</a>
+      <% if (isAdmin) { %><a class="button button-ghost" href="/admin/orders?q=<%= encodeURIComponent(card.id) %>">查看卡片订单</a><% } %>
     </div>
   </section>
 
@@ -43,7 +47,7 @@
           <label class="field"><span>状态</span><select name="status"><option value="active" <%= card.status === 'active' ? 'selected' : '' %>>可支付</option><option value="declined" <%= card.status === 'declined' ? 'selected' : '' %>>模拟拒付</option><option value="frozen" <%= card.status === 'frozen' ? 'selected' : '' %>>冻结</option></select></label>
         </div>
         <div class="form-row">
-          <label class="field"><span>余额</span><input type="number" name="balance" min="0" step="0.01" value="<%= formatMinor(card.balanceMinor) %>" required></label>
+          <label class="field"><span>余额（信用卡可为负）</span><input type="number" name="balance" step="0.01" value="<%= formatMinor(card.balanceMinor) %>" required></label>
           <label class="field"><span>拒付原因</span><input name="decline_reason" value="<%= card.declineReason || '风控拒绝' %>"></label>
         </div>
         <div class="form-row">
@@ -54,6 +58,23 @@
           <label class="field"><span>3DS 密码</span><input type="text" name="pin" minlength="4" maxlength="64" value="<%= card.pin %>" required></label>
           <label class="field"><span>CVV</span><input type="text" name="cvv" pattern="\d{3,4}" value="<%= card.cvv %>" required></label>
         </div>
+        <div class="form-row">
+          <label class="field"><span>单笔消费限额模式</span><select name="spend_limit_mode"><option value="inherit" <%= card.spendLimitMode !== 'custom' ? 'selected' : '' %>>继承用户/分组限额</option><option value="custom" <%= card.spendLimitMode === 'custom' ? 'selected' : '' %>>单独设置</option></select></label>
+          <label class="field"><span>单笔限额（0=不限）</span><input type="number" name="spend_limit" min="0" step="0.01" value="<%= card.spendLimitMode === 'custom' ? formatMinor(card.spendLimitMinor || 0) : '' %>"></label>
+        </div>
+        <% if (card.cardType === 'credit') { %>
+          <div class="form-row">
+            <label class="field"><span>透支配置模式</span><select name="overdraft_mode"><option value="inherit" <%= card.overdraftMode !== 'custom' ? 'selected' : '' %>>继承 BIN</option><option value="custom" <%= card.overdraftMode === 'custom' ? 'selected' : '' %>>单独设置</option></select></label>
+            <label class="field"><span>单卡透支额度（0=关闭）</span><input type="number" name="overdraft_limit" min="0" step="0.01" value="<%= card.overdraftMode === 'custom' ? formatMinor(card.overdraftLimitMinor || 0) : formatMinor(overdraft.limitMinor) %>"></label>
+          </div>
+          <div class="form-row">
+            <label class="field"><span>透支费率（bps）</span><input type="number" name="overdraft_fee_bps" min="0" max="10000" value="<%= card.overdraftMode === 'custom' ? card.overdraftFeeBps : overdraft.feeBps %>"></label>
+            <label class="field"><span>最低手续费（CNY）</span><input type="number" name="overdraft_min_fee" min="0" step="0.01" value="<%= formatMinor(card.overdraftMode === 'custom' ? (card.overdraftMinFeeMinor || 0) : overdraft.minFeeMinor) %>"></label>
+          </div>
+          <label class="field"><span>额度预警阈值（bps）</span><input type="number" name="overdraft_warning_bps" min="1" max="10000" value="<%= card.overdraftMode === 'custom' ? card.overdraftWarningBps : overdraft.warningBps %>"></label>
+        <% } else { %>
+          <input type="hidden" name="overdraft_mode" value="inherit">
+        <% } %>
         <div class="form-actions"><button class="button button-primary" type="submit">保存卡片设置</button></div>
       </form>
       <hr class="divider">
@@ -77,6 +98,10 @@
       <div><dt>卡 BIN</dt><dd><%= card.binName %> · <code><%= card.binPrefix %></code></dd></div>
       <div><dt>创建时间</dt><dd><%= formatDateTime(card.createdAt) %></dd></div>
       <div><dt>最后使用</dt><dd><%= card.lastUsedAt ? formatDateTime(card.lastUsedAt) : '尚未使用' %></dd></div>
+      <div><dt>生效单笔限额</dt><dd><%= cardSpendLimitMinor === null ? '不限' : `CNY ${formatMinor(cardSpendLimitMinor)}` %></dd></div>
+      <% if (card.cardType === 'credit') { %><div><dt>生效透支配置</dt><dd><%= overdraft.enabled ? `额度 CNY ${formatMinor(overdraft.limitMinor)}，费率 ${(overdraft.feeBps / 100).toFixed(2)}%，最低 CNY ${formatMinor(overdraft.minFeeMinor)}，预警 ${(overdraft.warningBps / 100).toFixed(2)}%` : '未开启透支' %></dd></div><% } %>
+      <div><dt>冻结来源</dt><dd><%= card.status === 'frozen' ? (card.freezeSource === 'automatic' ? '自动风控' : '管理员') : '-' %></dd></div>
+      <% if (card.consecutiveFailures) { %><div><dt>连续余额不足次数</dt><dd><%= card.consecutiveFailures %> / 5</dd></div><% } %>
     </dl>
   </section>
 </div>

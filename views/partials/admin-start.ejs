@@ -8,7 +8,8 @@
     <nav class="admin-nav" data-admin-nav>
       <a class="<%= currentPath === '/admin' ? 'active' : '' %>" href="/admin"><%= currentUser.role === 'admin' ? '仪表盘' : '我的仪表盘' %></a>
       <a class="<%= currentPath.startsWith('/admin/cards') ? 'active' : '' %>" href="/admin/cards">虚拟卡</a>
-      <a class="<%= currentPath.startsWith('/admin/account') ? 'active' : '' %>" href="/admin/account">账户</a>
+      <a class="<%= currentPath === '/admin/account' ? 'active' : '' %>" href="/admin/account">账户</a>
+      <a class="<%= currentPath.startsWith('/admin/account/transfer') ? 'active' : '' %>" href="/admin/account/transfer">转账</a>
       <a class="<%= currentPath.startsWith('/admin/invite') ? 'active' : '' %>" href="/admin/invite">邀请</a>
       <% if (currentUser.isSuperAdmin) { %>
         <a class="<%= currentPath.startsWith('/admin/bins') ? 'active' : '' %>" href="/admin/bins">卡 BIN</a>

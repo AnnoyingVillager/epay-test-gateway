@@ -10,16 +10,16 @@
       <% if (isSuperAdminUser) { %><a class="button button-primary" href="/admin/bins">前往 BIN 管理</a><% } %>
     </div>
   <% } else { %>
-  <form method="post" action="/admin/cards" class="form-grid card-create-form">
+  <form method="post" action="/admin/cards" class="form-grid card-create-form" data-money-confirm data-confirm-title="确认创建虚拟卡" data-confirm-message="创建后将立即生成卡号并写入初始余额流水。" data-confirm-action="确认创建" data-confirm-currency="CNY" data-confirm-amount-field="balance" data-confirm-amount-label="初始余额" data-confirm-target-field="owner_user_id" data-confirm-target-label="所属用户" data-confirm-note="普通用户开卡初始余额固定为 0，管理员可设置信用卡负余额。">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <label class="field field-span-2"><span>选择卡 BIN</span><select name="bin_id" required><option value="">请选择</option><% bins.forEach((bin) => { %><option value="<%= bin.id %>" <%= String(form.bin_id) === String(bin.id) ? 'selected' : '' %>><%= bin.name %> · <%= bin.prefix %> · <%= bin.number_length %> 位 · 3DS <%= bin.require_3ds ? '开启' : '关闭' %></option><% }) %></select></label>
     <% if (isAdmin) { %>
       <label class="field field-span-2"><span>所属用户</span><select name="owner_user_id"><% users.forEach((user) => { %><option value="<%= user.id %>" <%= String(form.owner_user_id || currentUser.id) === String(user.id) ? 'selected' : '' %>><%= user.username %> · <%= roleLabel(user) %></option><% }) %></select></label>
     <% } %>
     <% if (isAdmin) { %>
-      <label class="field"><span>初始余额</span><input type="number" name="balance" min="0" step="0.01" value="<%= form.balance || '1000.00' %>" required></label>
+      <label class="field"><span>初始余额（信用卡可为负）</span><input type="number" name="balance" step="0.01" value="<%= form.balance || '0.00' %>" required></label>
     <% } else { %>
-      <label class="field"><span>开卡赠金</span><input value="<%= formatMinor(group?.card_bonus_minor || 0) %>" disabled><small><%= group?.name || 'Default' %> 分组每张开卡赠送 <%= formatMinor(group?.card_bonus_minor || 0) %> CNY；分组上限 <%= group?.card_limit || 0 %> 张。</small></label>
+      <label class="field"><span>初始余额</span><input value="0.00" disabled><small><%= group?.name || 'Default' %> 分组普通用户开卡默认余额为 0；分组开卡上限 <%= group?.card_limit || 0 %> 张。</small></label>
       <input type="hidden" name="balance" value="0">
     <% } %>
     <label class="field"><span>货币</span><input value="由系统设置决定" disabled></label>
@@ -32,6 +32,20 @@
       <label class="field"><span>拒付原因</span><input name="decline_reason" value="<%= form.decline_reason || '风控拒绝' %>" placeholder="状态为模拟拒付时显示"></label>
     <% } else { %>
       <input type="hidden" name="status" value="active">
+    <% } %>
+    <% if (isAdmin) { %>
+      <div class="field-span-2"><p class="eyebrow">TRANSACTION LIMIT</p></div>
+      <label class="field"><span>单笔消费限额模式</span><select name="spend_limit_mode"><option value="inherit" <%= form.spend_limit_mode !== 'custom' ? 'selected' : '' %>>继承用户/分组限额</option><option value="custom" <%= form.spend_limit_mode === 'custom' ? 'selected' : '' %>>单独设置</option></select></label>
+      <label class="field"><span>单笔限额（0=不限）</span><input type="number" name="spend_limit" min="0" step="0.01" value="<%= form.spend_limit || '' %>"></label>
+      <div class="field-span-2"><p class="eyebrow">CREDIT OVERDRAFT</p><p class="form-hint">仅信用卡生效。继承 BIN 时留空单卡配置；单独设置可覆盖 BIN 的额度、费率、最低手续费和预警阈值。</p></div>
+      <label class="field"><span>透支配置模式</span><select name="overdraft_mode"><option value="inherit" <%= form.overdraft_mode !== 'custom' ? 'selected' : '' %>>继承 BIN</option><option value="custom" <%= form.overdraft_mode === 'custom' ? 'selected' : '' %>>单独设置</option></select></label>
+      <label class="field"><span>单卡透支额度（CNY）</span><input type="number" name="overdraft_limit" min="0" step="0.01" value="<%= form.overdraft_limit || '5000.00' %>"></label>
+      <label class="field"><span>透支费率（bps）</span><input type="number" name="overdraft_fee_bps" min="0" max="10000" value="<%= form.overdraft_fee_bps || '500' %>"></label>
+      <label class="field"><span>最低透支手续费（CNY）</span><input type="number" name="overdraft_min_fee" min="0" step="0.01" value="<%= form.overdraft_min_fee || '1.00' %>"></label>
+      <label class="field"><span>额度预警阈值（bps）</span><input type="number" name="overdraft_warning_bps" min="1" max="10000" value="<%= form.overdraft_warning_bps || '9500' %>"></label>
+    <% } else { %>
+      <input type="hidden" name="spend_limit_mode" value="inherit">
+      <input type="hidden" name="overdraft_mode" value="inherit">
     <% } %>
     <div class="form-actions field-span-2"><button class="button button-primary" type="submit">生成虚拟卡</button><a class="button button-ghost" href="/admin/cards">取消</a></div>
   </form>

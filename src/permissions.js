@@ -8,7 +8,7 @@ function isSuperAdmin(user) {
 
 function roleLabel(user) {
   if (isSuperAdmin(user)) return '超级管理员';
-  if (isAdmin(user)) return '普通管理员';
+  if (isAdmin(user)) return '管理员';
   return '普通用户';
 }
 

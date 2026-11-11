@@ -11,7 +11,7 @@
         <article class="list-card">
           <div class="list-card-main">
             <div class="bin-badge"><%= bin.brand %></div>
-            <div><strong><%= bin.name %></strong><p><code><%= bin.prefix %></code> · <%= bin.number_length %> 位 · <%= bin.card_type %> · <%= bin.country %> · 3DS <%= bin.require_3ds ? '开启' : '关闭' %></p></div>
+            <div><strong><%= bin.name %></strong><p><code><%= bin.prefix %></code> · <%= bin.number_length %> 位 · <%= bin.card_type %> · <%= bin.country %> · 3DS <%= bin.require_3ds ? '开启' : '关闭' %></p><small><%= bin.card_type === 'credit' ? `透支额度 ${formatMinor(bin.overdraft_limit_minor)} · 费率 ${(bin.overdraft_fee_bps / 100).toFixed(2)}% · 最低 ${formatMinor(bin.overdraft_min_fee_minor)}` : '借记卡不支持透支' %></small></div>
           </div>
           <div class="list-card-side">
             <span class="pill <%= bin.is_active ? 'pill-success' : 'pill-muted' %>"><%= bin.is_active ? '启用' : '停用' %></span>
@@ -32,6 +32,12 @@
               <label class="field"><span>卡号长度</span><input type="number" name="number_length" min="12" max="19" value="<%= bin.number_length %>" required></label>
               <label class="field"><span>3DS 验证</span><select name="require_3ds"><option value="0" <%= bin.require_3ds ? '' : 'selected' %>>关闭</option><option value="1" <%= bin.require_3ds ? 'selected' : '' %>>开启</option></select></label>
               <label class="field"><span>状态</span><select name="is_active"><option value="0" <%= bin.is_active ? '' : 'selected' %>>停用</option><option value="1" <%= bin.is_active ? 'selected' : '' %>>启用</option></select></label>
+              <div class="field-span-2"><p class="eyebrow">CREDIT OVERDRAFT</p><p class="form-hint">仅信用卡生效；透支额度为 0 时关闭。单卡可在详情中覆盖以下配置。</p></div>
+              <label class="field"><span>透支额度（CNY）</span><input type="number" name="overdraft_limit" min="0" step="0.01" value="<%= formatMinor(bin.overdraft_limit_minor) %>" required></label>
+              <label class="field"><span>透支费率（bps）</span><input type="number" name="overdraft_fee_bps" min="0" max="10000" value="<%= bin.overdraft_fee_bps %>" required></label>
+              <label class="field"><span>最低透支手续费（CNY）</span><input type="number" name="overdraft_min_fee" min="0" step="0.01" value="<%= formatMinor(bin.overdraft_min_fee_minor) %>" required></label>
+              <label class="field"><span>额度预警（bps）</span><input type="number" name="overdraft_warning_bps" min="1" max="10000" value="<%= bin.overdraft_warning_bps %>" required></label>
+              <label class="field"><span>BIN 解冻费（CNY）</span><input type="number" name="unfreeze_fee" min="0" step="0.01" value="<%= bin.unfreeze_fee_minor === null ? '' : formatMinor(bin.unfreeze_fee_minor) %>" placeholder="留空继承全局"></label>
               <div class="field field-span-2"><span>可用用户分组</span><div class="button-row"><% groups.forEach((group) => { %><label class="checkbox-field"><input type="checkbox" name="group_ids" value="<%= group.id %>" <%= assigned.includes(String(group.id)) ? 'checked' : '' %>><span><%= group.name %></span></label><% }) %></div></div>
               <div class="form-actions"><button class="button button-primary button-small" type="submit">保存修改</button></div>
             </form>
@@ -51,6 +57,9 @@
       <div class="form-row"><label class="field"><span>卡品牌</span><input name="brand" value="Visa" required></label><label class="field"><span>卡号长度</span><input type="number" name="number_length" min="12" max="19" value="16" required></label></div>
       <div class="form-row"><label class="field"><span>卡类型</span><select name="card_type"><option value="debit">借记卡（即时结算）</option><option value="credit">信用卡（担保结算）</option></select></label><label class="field"><span>国家代码</span><input name="country" value="CN" maxlength="2" required></label></div>
       <label class="field"><span>3DS 验证</span><select name="require_3ds"><option value="0">关闭</option><option value="1" selected>开启</option></select></label>
+      <div class="form-row"><label class="field"><span>透支额度（CNY）</span><input type="number" name="overdraft_limit" min="0" step="0.01" value="5000.00" required></label><label class="field"><span>透支费率（bps）</span><input type="number" name="overdraft_fee_bps" min="0" max="10000" value="500" required></label></div>
+      <div class="form-row"><label class="field"><span>最低透支手续费（CNY）</span><input type="number" name="overdraft_min_fee" min="0" step="0.01" value="1.00" required></label><label class="field"><span>预警阈值（bps）</span><input type="number" name="overdraft_warning_bps" min="1" max="10000" value="9500" required></label></div>
+      <label class="field"><span>BIN 解冻费（CNY）</span><input type="number" name="unfreeze_fee" min="0" step="0.01" placeholder="留空继承全局"></label>
       <div class="field"><span>可用用户分组</span><div class="button-row"><% groups.forEach((group) => { %><label class="checkbox-field"><input type="checkbox" name="group_ids" value="<%= group.id %>" <%= group.name === 'Default' ? 'checked' : '' %>><span><%= group.name %></span></label><% }) %></div></div>
       <button class="button button-primary button-block" type="submit">创建 BIN</button>
       <p class="form-hint">虚拟卡号会使用该前缀生成，并通过 Luhn 校验。</p>

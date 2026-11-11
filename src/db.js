@@ -71,6 +71,9 @@ const DEFAULT_SETTINGS = {
   card_withdraw_fee_bps: '0',
   card_min_withdraw_minor: '0',
   card_min_withdraw_fee_minor: '0',
+  card_unfreeze_fee_minor: '10000',
+  internal_transfer_fee_bps: '0',
+  internal_transfer_min_fee_minor: '0',
   merchant_guarantee_seconds: '300'
 };
 
@@ -87,6 +90,67 @@ function tableColumns(db, table) {
 function ensureColumn(db, table, name, definition) {
   if (tableColumns(db, table).has(name)) return false;
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+  return true;
+}
+
+function migrateCardsForOverdraft(db) {
+  const table = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cards'").get();
+  if (!table?.sql || !/CHECK\s*\(\s*balance_minor\s*>=\s*0\s*\)/i.test(table.sql)) return false;
+  const existing = tableColumns(db, 'cards');
+  const columns = [
+    'id', 'owner_user_id', 'bin_id', 'card_number_enc', 'card_number_hash', 'last4',
+    'expires_month', 'expires_year', 'cvv_enc', 'pin_enc', 'balance_minor', 'currency',
+    'status', 'decline_reason', 'freeze_source', 'freeze_code', 'consecutive_failures', 'spend_limit_mode',
+    'spend_limit_minor', 'overdraft_mode', 'overdraft_limit_minor', 'overdraft_fee_bps',
+    'overdraft_min_fee_minor', 'overdraft_warning_bps', 'created_at', 'updated_at', 'last_used_at'
+  ].filter((column) => existing.has(column));
+  const copyColumns = columns.join(', ');
+  db.exec('PRAGMA foreign_keys = OFF; PRAGMA legacy_alter_table = ON;');
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    db.exec(`
+      CREATE TABLE cards_overdraft_new (
+        id TEXT PRIMARY KEY,
+        owner_user_id INTEGER REFERENCES users(id),
+        bin_id INTEGER NOT NULL REFERENCES bins(id),
+        card_number_enc TEXT NOT NULL,
+        card_number_hash TEXT,
+        last4 TEXT NOT NULL,
+        expires_month INTEGER NOT NULL CHECK(expires_month BETWEEN 1 AND 12),
+        expires_year INTEGER NOT NULL,
+        cvv_enc TEXT NOT NULL,
+        pin_enc TEXT NOT NULL,
+        balance_minor INTEGER NOT NULL DEFAULT 0,
+        currency TEXT NOT NULL DEFAULT 'CNY',
+        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'declined', 'frozen')),
+        decline_reason TEXT,
+        freeze_source TEXT NOT NULL DEFAULT 'none',
+        freeze_code TEXT,
+        consecutive_failures INTEGER NOT NULL DEFAULT 0,
+        spend_limit_mode TEXT NOT NULL DEFAULT 'inherit',
+        spend_limit_minor INTEGER,
+        overdraft_mode TEXT NOT NULL DEFAULT 'inherit',
+        overdraft_limit_minor INTEGER,
+        overdraft_fee_bps INTEGER,
+        overdraft_min_fee_minor INTEGER,
+        overdraft_warning_bps INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        last_used_at INTEGER
+      );
+      INSERT INTO cards_overdraft_new (${copyColumns}) SELECT ${copyColumns} FROM cards;
+      DROP TABLE cards;
+      ALTER TABLE cards_overdraft_new RENAME TO cards;
+    `);
+    db.exec('COMMIT');
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch {}
+    throw error;
+  } finally {
+    db.exec('PRAGMA legacy_alter_table = OFF; PRAGMA foreign_keys = ON;');
+  }
+  const violations = db.prepare('PRAGMA foreign_key_check').all();
+  if (violations.length) throw new Error(`Card overdraft migration introduced ${violations.length} foreign-key violation(s)`);
   return true;
 }
 
@@ -160,6 +224,7 @@ function migrate(db, config) {
       card_risk TEXT NOT NULL DEFAULT 'normal' CHECK(card_risk IN ('normal', 'frozen')),
       card_balance_limit_minor INTEGER,
       spend_limit_minor INTEGER,
+      spend_limit_mode TEXT NOT NULL DEFAULT 'inherit',
       super_risk_at INTEGER,
       deleted_at INTEGER,
       deleted_by_uid INTEGER,
@@ -177,6 +242,11 @@ function migrate(db, config) {
       country TEXT NOT NULL DEFAULT 'CN',
       number_length INTEGER NOT NULL DEFAULT 16 CHECK(number_length BETWEEN 12 AND 19),
       require_3ds INTEGER NOT NULL DEFAULT 1,
+      overdraft_limit_minor INTEGER NOT NULL DEFAULT 500000,
+      overdraft_fee_bps INTEGER NOT NULL DEFAULT 500,
+      overdraft_min_fee_minor INTEGER NOT NULL DEFAULT 100,
+      overdraft_warning_bps INTEGER NOT NULL DEFAULT 9500,
+      unfreeze_fee_minor INTEGER,
       is_active INTEGER NOT NULL DEFAULT 1,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
@@ -199,10 +269,20 @@ function migrate(db, config) {
       expires_year INTEGER NOT NULL,
       cvv_enc TEXT NOT NULL,
       pin_enc TEXT NOT NULL,
-      balance_minor INTEGER NOT NULL DEFAULT 0 CHECK(balance_minor >= 0),
+      balance_minor INTEGER NOT NULL DEFAULT 0,
       currency TEXT NOT NULL DEFAULT 'CNY',
       status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'declined', 'frozen')),
       decline_reason TEXT,
+      freeze_source TEXT NOT NULL DEFAULT 'none',
+      freeze_code TEXT,
+      consecutive_failures INTEGER NOT NULL DEFAULT 0,
+      spend_limit_mode TEXT NOT NULL DEFAULT 'inherit',
+      spend_limit_minor INTEGER,
+      overdraft_mode TEXT NOT NULL DEFAULT 'inherit',
+      overdraft_limit_minor INTEGER,
+      overdraft_fee_bps INTEGER,
+      overdraft_min_fee_minor INTEGER,
+      overdraft_warning_bps INTEGER,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       last_used_at INTEGER
@@ -242,6 +322,8 @@ function migrate(db, config) {
       commission_bps INTEGER NOT NULL DEFAULT 0,
       commission_minor INTEGER NOT NULL DEFAULT 0,
       merchant_net_minor INTEGER NOT NULL DEFAULT 0,
+      overdraft_fee_minor INTEGER NOT NULL DEFAULT 0,
+      refunded_overdraft_fee_minor INTEGER NOT NULL DEFAULT 0,
       refunded_minor INTEGER NOT NULL DEFAULT 0,
       refunded_at INTEGER,
       notify_url TEXT NOT NULL,
@@ -377,7 +459,28 @@ function migrate(db, config) {
       details TEXT,
       created_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS internal_transfers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      reference TEXT NOT NULL UNIQUE,
+      sender_user_id INTEGER NOT NULL REFERENCES users(id),
+      sender_uid INTEGER NOT NULL,
+      recipient_user_id INTEGER NOT NULL REFERENCES users(id),
+      recipient_uid INTEGER NOT NULL,
+      source_type TEXT NOT NULL CHECK(source_type IN ('account', 'card')),
+      source_card_id TEXT REFERENCES cards(id) ON DELETE SET NULL,
+      recipient_card_id TEXT REFERENCES cards(id) ON DELETE SET NULL,
+      source_last4 TEXT,
+      recipient_last4 TEXT,
+      amount_minor INTEGER NOT NULL CHECK(amount_minor > 0),
+      fee_minor INTEGER NOT NULL DEFAULT 0,
+      total_debit_minor INTEGER NOT NULL,
+      note TEXT,
+      created_at INTEGER NOT NULL
+    );
   `);
+
+  migrateCardsForOverdraft(db);
 
   const addedUid = ensureColumn(db, 'users', 'uid', 'INTEGER');
   ensureColumn(db, 'users', 'email', 'TEXT');
@@ -396,12 +499,18 @@ function migrate(db, config) {
   ensureColumn(db, 'users', 'card_risk', "TEXT NOT NULL DEFAULT 'normal'");
   ensureColumn(db, 'users', 'card_balance_limit_minor', 'INTEGER');
   ensureColumn(db, 'users', 'spend_limit_minor', 'INTEGER');
+  const addedUserSpendMode = ensureColumn(db, 'users', 'spend_limit_mode', "TEXT NOT NULL DEFAULT 'inherit'");
   ensureColumn(db, 'users', 'super_risk_at', 'INTEGER');
   ensureColumn(db, 'users', 'deleted_at', 'INTEGER');
   ensureColumn(db, 'users', 'deleted_by_uid', 'INTEGER');
   ensureColumn(db, 'users', 'deletion_reason', 'TEXT');
 
   const addedBin3ds = ensureColumn(db, 'bins', 'require_3ds', 'INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'bins', 'overdraft_limit_minor', 'INTEGER NOT NULL DEFAULT 500000');
+  ensureColumn(db, 'bins', 'overdraft_fee_bps', 'INTEGER NOT NULL DEFAULT 500');
+  ensureColumn(db, 'bins', 'overdraft_min_fee_minor', 'INTEGER NOT NULL DEFAULT 100');
+  ensureColumn(db, 'bins', 'overdraft_warning_bps', 'INTEGER NOT NULL DEFAULT 9500');
+  ensureColumn(db, 'bins', 'unfreeze_fee_minor', 'INTEGER');
   ensureColumn(db, 'merchants', 'balance_minor', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'merchants', 'commission_bps', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'merchants', 'is_default', 'INTEGER NOT NULL DEFAULT 0');
@@ -416,10 +525,27 @@ function migrate(db, config) {
   ensureColumn(db, 'orders', 'commission_bps', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'orders', 'commission_minor', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'orders', 'merchant_net_minor', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'orders', 'overdraft_fee_minor', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'orders', 'refunded_overdraft_fee_minor', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'orders', 'refunded_minor', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'orders', 'refunded_at', 'INTEGER');
   ensureColumn(db, 'refunds', 'out_refund_no', 'TEXT');
   ensureColumn(db, 'merchant_transactions', 'reference', 'TEXT');
+
+  ensureColumn(db, 'cards', 'freeze_source', "TEXT NOT NULL DEFAULT 'none'");
+  ensureColumn(db, 'cards', 'freeze_code', 'TEXT');
+  ensureColumn(db, 'cards', 'consecutive_failures', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'cards', 'spend_limit_mode', "TEXT NOT NULL DEFAULT 'inherit'");
+  ensureColumn(db, 'cards', 'spend_limit_minor', 'INTEGER');
+  ensureColumn(db, 'cards', 'overdraft_mode', "TEXT NOT NULL DEFAULT 'inherit'");
+  ensureColumn(db, 'cards', 'overdraft_limit_minor', 'INTEGER');
+  ensureColumn(db, 'cards', 'overdraft_fee_bps', 'INTEGER');
+  ensureColumn(db, 'cards', 'overdraft_min_fee_minor', 'INTEGER');
+  ensureColumn(db, 'cards', 'overdraft_warning_bps', 'INTEGER');
+
+  if (addedUserSpendMode) {
+    db.prepare(`UPDATE users SET spend_limit_mode = 'custom', spend_limit_minor = CASE WHEN spend_limit_minor < 0 THEN 0 ELSE spend_limit_minor END WHERE spend_limit_minor IS NOT NULL`).run();
+  }
 
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_uid ON users(uid);
@@ -444,6 +570,8 @@ function migrate(db, config) {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_merchant_tx_reference ON merchant_transactions(reference) WHERE reference IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_email_codes_email ON email_verification_codes(email, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_password_reset_user ON password_reset_codes(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_internal_transfers_sender ON internal_transfers(sender_user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_internal_transfers_recipient ON internal_transfers(recipient_user_id, created_at DESC);
   `);
 
   if (addedBin3ds) {
@@ -660,6 +788,7 @@ function mapUser(row) {
     cardRisk: row.card_risk || 'normal',
     cardBalanceLimitMinor: row.card_balance_limit_minor ?? null,
     spendLimitMinor: row.spend_limit_minor ?? null,
+    spendLimitMode: row.spend_limit_mode || 'inherit',
     superRiskAt: row.super_risk_at || null,
     deletedAt: row.deleted_at || null,
     deletedByUid: row.deleted_by_uid ?? null,
@@ -709,6 +838,21 @@ function mapCard(row, secret, includeSecrets = false) {
     currency: row.currency,
     status: row.status,
     declineReason: row.decline_reason,
+    freezeSource: row.freeze_source || 'none',
+    freezeCode: row.freeze_code || null,
+    consecutiveFailures: row.consecutive_failures || 0,
+    spendLimitMode: row.spend_limit_mode || 'inherit',
+    spendLimitMinor: row.spend_limit_minor ?? null,
+    overdraftMode: row.overdraft_mode || 'inherit',
+    overdraftLimitMinor: row.overdraft_limit_minor ?? null,
+    overdraftFeeBps: row.overdraft_fee_bps ?? null,
+    overdraftMinFeeMinor: row.overdraft_min_fee_minor ?? null,
+    overdraftWarningBps: row.overdraft_warning_bps ?? null,
+    binOverdraftLimitMinor: row.bin_overdraft_limit_minor ?? 500000,
+    binOverdraftFeeBps: row.bin_overdraft_fee_bps ?? 500,
+    binOverdraftMinFeeMinor: row.bin_overdraft_min_fee_minor ?? 100,
+    binOverdraftWarningBps: row.bin_overdraft_warning_bps ?? 9500,
+    binUnfreezeFeeMinor: row.bin_unfreeze_fee_minor ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     lastUsedAt: row.last_used_at
@@ -742,6 +886,8 @@ function mapOrder(row) {
     commissionBps: row.commission_bps || 0,
     commissionMinor: row.commission_minor || 0,
     merchantNetMinor: row.merchant_net_minor || 0,
+    overdraftFeeMinor: row.overdraft_fee_minor || 0,
+    refundedOverdraftFeeMinor: row.refunded_overdraft_fee_minor || 0,
     refundedMinor: row.refunded_minor || 0,
     refundedAt: row.refunded_at || null,
     notifyUrl: row.notify_url,
@@ -799,6 +945,9 @@ function merchantById(db, secret, id) {
 function cardById(db, secret, id, includeSecrets = true) {
   const row = db.prepare(`
     SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, b.require_3ds AS bin_require_3ds,
+      b.overdraft_limit_minor AS bin_overdraft_limit_minor, b.overdraft_fee_bps AS bin_overdraft_fee_bps,
+      b.overdraft_min_fee_minor AS bin_overdraft_min_fee_minor, b.overdraft_warning_bps AS bin_overdraft_warning_bps,
+      b.unfreeze_fee_minor AS bin_unfreeze_fee_minor,
       u.username AS owner_username, u.uid AS owner_uid
     FROM cards c
     JOIN bins b ON b.id = c.bin_id
@@ -811,6 +960,9 @@ function cardById(db, secret, id, includeSecrets = true) {
 function cardByNumberHash(db, secret, cardNumber) {
   const row = db.prepare(`
     SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, b.require_3ds AS bin_require_3ds,
+      b.overdraft_limit_minor AS bin_overdraft_limit_minor, b.overdraft_fee_bps AS bin_overdraft_fee_bps,
+      b.overdraft_min_fee_minor AS bin_overdraft_min_fee_minor, b.overdraft_warning_bps AS bin_overdraft_warning_bps,
+      b.unfreeze_fee_minor AS bin_unfreeze_fee_minor,
       u.username AS owner_username, u.uid AS owner_uid
     FROM cards c
     JOIN bins b ON b.id = c.bin_id

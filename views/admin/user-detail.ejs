@@ -9,7 +9,7 @@
       <div><dt>邮箱</dt><dd><%= user.email || '-' %></dd></div>
       <div><dt>分组</dt><dd><%= user.groupName || 'Default' %></dd></div>
       <div><dt>账户余额</dt><dd><strong>CNY <%= formatMinor(user.accountBalanceMinor) %></strong></dd></div>
-      <div><dt>生效消费限额</dt><dd><%= effectiveLimitMinor === null ? '不限制' : 'CNY ' + formatMinor(effectiveLimitMinor) %></dd></div>
+      <div><dt>生效单笔消费限额</dt><dd><%= effectiveLimitMinor === null ? '不限制' : 'CNY ' + formatMinor(effectiveLimitMinor) %></dd></div>
       <div><dt>累计已消费</dt><dd>CNY <%= formatMinor(spentMinor) %></dd></div>
       <div><dt>邀请码</dt><dd><code><%= user.inviteCode %></code></dd></div>
       <div><dt>邀请人</dt><dd><% if (topology.inviter) { %><% if (topology.inviter.deletedAt) { %><%= topology.inviter.username %> (UID <%= topology.inviter.uid %>) · 已删除<% } else { %><a class="text-link" href="/admin/users/<%= topology.inviter.uid %>"><%= topology.inviter.username %> (UID <%= topology.inviter.uid %>)</a><% } %><% } else { %>-<% } %></dd></div>
@@ -22,8 +22,16 @@
     <div class="panel-head"><div><p class="eyebrow">ACCOUNT CONTROL</p><h2>账户与风控</h2></div></div>
     <% if (canManage && user.uid === 0) { %><div class="alert alert-warning">UID 0 是唯一超级管理员，系统禁止停用、阻断、删除或降级；密码仍可在此重置或前往账户页面修改。</div><% } %>
     <% if (!canManage) { %>
-      <div class="alert alert-warning"><%= user.uid === 0 ? 'UID 0 超级管理员受系统保护，不能在用户管理中停用、降级或删除；如需修改密码，请使用账户页面。' : '普通管理员不能修改其他管理员账号。' %></div>
+      <div class="alert alert-warning"><%= user.uid === 0 ? 'UID 0 超级管理员受系统保护。管理员不能查看其名下卡片，也不能在用户管理中停用、降级或修改。' : '管理员不能修改其他管理员账号，也不会显示其名下卡片。' %></div>
     <% } else { %>
+    <% if (isSuperAdminUser && user.uid !== 0) { %>
+    <form method="post" action="/admin/users/<%= user.uid %>/role" class="form-row" data-confirm="确认调整用户角色？角色变化会立即影响该用户的管理权限和现有登录会话。">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label class="field"><span>用户角色</span><select name="role"><option value="user" <%= user.role === 'user' ? 'selected' : '' %>>普通用户</option><option value="admin" <%= user.role === 'admin' ? 'selected' : '' %>>管理员</option></select></label>
+      <div class="form-actions"><button class="button button-ghost" type="submit">保存角色</button></div>
+    </form>
+    <hr class="divider">
+    <% } %>
     <form method="post" action="/admin/users/<%= user.uid %>/update" class="stack-form">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="form-row">
@@ -35,8 +43,8 @@
         <label class="field"><span>卡片风控</span><select name="card_risk"><option value="normal" <%= user.cardRisk === 'normal' ? 'selected' : '' %>>正常</option><option value="frozen" <%= user.cardRisk === 'frozen' ? 'selected' : '' %>>冻结支付</option></select></label>
       </div>
       <div class="form-row">
-        <label class="field"><span>消费限额模式</span><select name="spend_limit_mode"><option value="inherit" <%= user.spendLimitMinor === null ? 'selected' : '' %>>继承分组限额</option><option value="unlimited" <%= user.spendLimitMinor === -1 ? 'selected' : '' %>>单独不限制</option><option value="custom" <%= user.spendLimitMinor !== null && user.spendLimitMinor !== -1 ? 'selected' : '' %>>自定义限额</option></select></label>
-        <label class="field"><span>自定义限额</span><input type="number" name="spend_limit" min="0" step="0.01" value="<%= user.spendLimitMinor !== null && user.spendLimitMinor !== -1 ? formatMinor(user.spendLimitMinor) : '' %>"></label>
+        <label class="field"><span>单笔消费限额模式</span><select name="spend_limit_mode"><option value="inherit" <%= user.spendLimitMode !== 'custom' ? 'selected' : '' %>>继承分组单笔限额</option><option value="custom" <%= user.spendLimitMode === 'custom' ? 'selected' : '' %>>使用单独限额</option></select></label>
+        <label class="field"><span>单独单笔限额（0=不限额）</span><input type="number" name="spend_limit" min="0" step="0.01" value="<%= user.spendLimitMode === 'custom' ? formatMinor(user.spendLimitMinor || 0) : '' %>"></label>
       </div>
       <div class="form-row">
         <label class="field"><span>卡面额度</span><input type="number" name="card_balance_limit" min="0" step="0.01" value="<%= user.cardBalanceLimitMinor === null ? '' : formatMinor(user.cardBalanceLimitMinor) %>"></label>
@@ -106,7 +114,7 @@
 
 <section class="panel">
   <div class="panel-head"><div><p class="eyebrow">CARDS</p><h2>名下虚拟卡</h2></div><span class="count-badge"><%= cards.length %></span></div>
-  <% if (!cards.length) { %><div class="empty-state compact">该用户暂无虚拟卡。</div><% } else { %>
+  <% if (protectedAdminProfile) { %><div class="empty-state compact">管理员账号名下的虚拟卡仅超级管理员可见。</div><% } else if (!cards.length) { %><div class="empty-state compact">该用户暂无虚拟卡。</div><% } else { %>
     <div class="table-wrap"><table><thead><tr><th>卡片</th><th>BIN</th><th>类型</th><th>余额</th><th>状态</th><th></th></tr></thead><tbody>
       <% cards.forEach((card) => { %><tr><td><code><%= formatCardShort(card) %></code></td><td><%= card.binName %></td><td><%= card.cardType === 'credit' ? '信用卡' : '借记卡' %></td><td>CNY <%= formatMinor(card.balanceMinor) %></td><td><%= statusLabel(card.status) %></td><td class="align-right"><% if (canManage) { %><a class="button button-ghost button-small" href="/admin/cards/<%= card.id %>">管理</a><% } else { %>-<% } %></td></tr><% }) %>
     </tbody></table></div>

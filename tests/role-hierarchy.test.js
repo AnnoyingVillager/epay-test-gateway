@@ -251,6 +251,8 @@ test('normal administrators can manage ordinary-user cards but not another admin
   const cardOwner = await createUser(rootAgent, bundle, { username: 'CardOwner', password: 'CardOwner123' });
   const ordinaryCard = insertCard(bundle, cardOwner.id, { id: 'CARD-ORDINARY', name: 'Ordinary BIN', prefix: '621225' });
   const adminCard = insertCard(bundle, otherAdmin.id, { id: 'CARD-ADMIN', name: 'Admin BIN', prefix: '621226' });
+  const superAdminRow = bundle.db.prepare('SELECT id FROM users WHERE uid = 0').get();
+  const superAdminCard = insertCard(bundle, superAdminRow.id, { id: 'CARD-SUPER', name: 'Super BIN', prefix: '621227' });
 
   const admin = request.agent(bundle.app);
   assert.equal((await login(admin, secondAdmin.username, 'CardAdmin123')).status, 302);
@@ -258,9 +260,16 @@ test('normal administrators can manage ordinary-user cards but not another admin
   assert.equal(response.status, 200);
   assert.match(response.text, /CardOwner/);
   assert.doesNotMatch(response.text, /OtherCardAdmin/);
+  assert.doesNotMatch(response.text, /CARD-SUPER/);
 
   response = await admin.get(`/admin/cards/${adminCard}`);
   assert.equal(response.status, 404);
+  response = await admin.get(`/admin/cards/${superAdminCard}`);
+  assert.equal(response.status, 404);
+  response = await admin.get('/admin/users/0');
+  assert.equal(response.status, 200);
+  assert.doesNotMatch(response.text, /CARD-SUPER/);
+  assert.match(response.text, /管理员账号名下的虚拟卡仅超级管理员可见/);
   response = await admin.post(`/admin/cards/${adminCard}/decline`).type('form').send({ _csrf: 'test', reason: 'test' });
   assert.notEqual(response.status, 200);
 

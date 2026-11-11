@@ -365,7 +365,7 @@ test('group BIN access, account transfers, super risk lock and archived UID work
   response = await userAgent.get('/admin/cards/new');
   assert.match(response.text, /411111/);
   assert.doesNotMatch(response.text, /522222/);
-  assert.match(response.text, /Default 分组每张开卡赠送 700\.00 CNY/);
+  assert.match(response.text, /Default 分组普通用户开卡默认余额为 0/);
   csrf = csrfFrom(response.text);
   const defaultBin = db.prepare("SELECT * FROM bins WHERE prefix = '411111'").get();
   response = await userAgent.post('/admin/cards').type('form').send({
@@ -381,7 +381,7 @@ test('group BIN access, account transfers, super risk lock and archived UID work
   assert.equal(response.status, 302);
   const defaultCardId = decodeURIComponent(response.headers.location.split('/admin/cards/')[1].split('?')[0]);
   let defaultCard = db.prepare('SELECT * FROM cards WHERE id = ?').get(defaultCardId);
-  assert.equal(defaultCard.balance_minor, 70000);
+  assert.equal(defaultCard.balance_minor, 0);
   assert.equal(defaultCard.status, 'active');
 
   response = await admin.get(`/admin/users/${user.uid}`);
@@ -408,7 +408,7 @@ test('group BIN access, account transfers, super risk lock and archived UID work
   response = await userAgent.get('/admin/cards/new');
   assert.match(response.text, /522222/);
   assert.doesNotMatch(response.text, /411111/);
-  assert.match(response.text, /VIP 分组每张开卡赠送 7000\.00 CNY/);
+  assert.match(response.text, /VIP 分组普通用户开卡默认余额为 0/);
   csrf = csrfFrom(response.text);
   response = await userAgent.post('/admin/cards').type('form').send({
     _csrf: csrf,
@@ -421,7 +421,7 @@ test('group BIN access, account transfers, super risk lock and archived UID work
   });
   assert.equal(response.status, 302);
   const vipCardId = decodeURIComponent(response.headers.location.split('/admin/cards/')[1].split('?')[0]);
-  assert.equal(db.prepare('SELECT balance_minor FROM cards WHERE id = ?').get(vipCardId).balance_minor, 700000);
+  assert.equal(db.prepare('SELECT balance_minor FROM cards WHERE id = ?').get(vipCardId).balance_minor, 0);
 
   accountTransaction(db, user.id, 'TEST_CREDIT', 100000, 'Transfer test credit');
   setSetting(db, 'card_deposit_fee_bps', '100');
@@ -439,7 +439,7 @@ test('group BIN access, account transfers, super risk lock and archived UID work
   assert.equal(response.status, 302);
   assert.match(response.headers.location, /ok=/);
   assert.equal(db.prepare('SELECT account_balance_minor FROM users WHERE id = ?').get(user.id).account_balance_minor, 89900);
-  assert.equal(db.prepare('SELECT balance_minor FROM cards WHERE id = ?').get(defaultCardId).balance_minor, 80000);
+  assert.equal(db.prepare('SELECT balance_minor FROM cards WHERE id = ?').get(defaultCardId).balance_minor, 10000);
   let depositTransaction = db.prepare("SELECT note FROM account_transactions WHERE user_id = ? AND type = 'CARD_DEPOSIT' ORDER BY id DESC LIMIT 1").get(user.id);
   assert.match(depositTransaction.note, new RegExp(`Default only（借记卡） 411111\\*\\*\\*${defaultCard.last4}`));
   assert.doesNotMatch(depositTransaction.note, new RegExp(defaultCardId));
@@ -447,7 +447,7 @@ test('group BIN access, account transfers, super risk lock and archived UID work
   response = await userAgent.post('/admin/account/withdraw').type('form').send({ _csrf: csrf, card_id: defaultCardId, amount: '50.00' });
   assert.equal(response.status, 302);
   assert.equal(db.prepare('SELECT account_balance_minor FROM users WHERE id = ?').get(user.id).account_balance_minor, 94850);
-  assert.equal(db.prepare('SELECT balance_minor FROM cards WHERE id = ?').get(defaultCardId).balance_minor, 75000);
+  assert.equal(db.prepare('SELECT balance_minor FROM cards WHERE id = ?').get(defaultCardId).balance_minor, 5000);
   let withdrawTransaction = db.prepare("SELECT note FROM account_transactions WHERE user_id = ? AND type = 'CARD_WITHDRAW' ORDER BY id DESC LIMIT 1").get(user.id);
   assert.match(withdrawTransaction.note, new RegExp(`Default only（借记卡） 411111\\*\\*\\*${defaultCard.last4}`));
   assert.doesNotMatch(withdrawTransaction.note, new RegExp(defaultCardId));
@@ -504,8 +504,9 @@ test('group BIN access, account transfers, super risk lock and archived UID work
   db.prepare("UPDATE cards SET status = 'frozen' WHERE id = ?").run(defaultCardId);
   response = await userAgent.post('/admin/account/deposit').type('form').send({ _csrf: csrf, card_id: defaultCardId, amount: '10.00' });
   assert.equal(response.status, 302);
-  assert.match(response.headers.location, /error=/);
-  assert.equal(db.prepare('SELECT balance_minor FROM cards WHERE id = ?').get(defaultCardId).balance_minor, 75000);
+  assert.match(response.headers.location, /ok=/);
+  assert.equal(db.prepare('SELECT account_balance_minor FROM users WHERE id = ?').get(user.id).account_balance_minor, 93800);
+  assert.equal(db.prepare('SELECT balance_minor FROM cards WHERE id = ?').get(defaultCardId).balance_minor, 6000);
 
   user = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
   response = await admin.get(`/admin/users/${user.uid}`);

@@ -63,12 +63,12 @@
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <label class="field"><span>用户名</span><input name="username" required autocomplete="off"></label>
       <label class="field"><span>密码</span><input type="password" name="password" minlength="8" required autocomplete="new-password"></label>
-      <label class="field"><span>角色</span><select name="role"><option value="user">普通用户</option><% if (isSuperAdmin) { %><option value="admin">普通管理员</option><% } %></select></label>
+      <label class="field"><span>角色</span><select name="role"><option value="user">普通用户</option><% if (isSuperAdmin) { %><option value="admin">管理员</option><% } %></select></label>
       <label class="field"><span>用户分组</span><select name="group_id"><% groups.forEach((group) => { %><option value="<%= group.id %>" <%= group.name === 'Default' ? 'selected' : '' %>><%= group.name %></option><% }) %></select></label>
       <label class="field"><span>邀请权限模式</span><select name="invite_permission_mode"><option value="inherit">继承全局策略</option><option value="custom">使用单独开关</option></select></label>
       <label class="field checkbox-field"><input type="hidden" name="can_invite" value="0"><input type="checkbox" name="can_invite" value="1" checked><span>开启单独邀请开关</span></label>
       <button class="button button-primary button-block" type="submit">创建用户</button>
-      <p class="form-hint">UID 0 是唯一超级管理员；其他用户自动分配独立 UID。<%= isSuperAdmin ? '超级管理员可创建普通管理员。' : '普通管理员只能创建普通用户。' %></p>
+      <p class="form-hint">UID 0 是唯一超级管理员；其他用户自动分配独立 UID。<%= isSuperAdmin ? '超级管理员可创建管理员，也可在详情中升级或降级角色。' : '管理员只能创建普通用户，不能调整角色。' %></p>
     </form>
   </aside>
 </div>

@@ -1,0 +1,50 @@
+<%- include('../partials/head', { bodyClass: 'admin-page' }) %>
+<%- include('../partials/admin-start') %>
+<div class="detail-grid">
+  <section class="panel">
+    <div class="panel-head"><div><p class="eyebrow">INTERNAL TRANSFER</p><h2>向其他用户转账</h2></div><a class="text-link" href="/admin/account">返回账户</a></div>
+    <div class="alert alert-warning"><strong>请先确认收款人：</strong>卡号与用户名必须完全匹配。转账成功后不可撤销，请核对卡号和用户名。</div>
+    <form method="post" action="/admin/account/transfer" class="stack-form" data-money-confirm data-confirm-title="确认站内转账" data-confirm-message="转账成功后金额会立即进入对方虚拟卡，且无法撤销。" data-confirm-action="确认转账" data-confirm-currency="CNY" data-confirm-amount-field="amount" data-confirm-target-field="recipient_username" data-confirm-target-label="收款用户名" data-confirm-note="手续费以服务端计算结果为准，向付款方额外收取；收款方获得完整转账金额。">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label class="field"><span>付款来源</span><select name="source"><option value="account">账户余额（CNY <%= formatMinor(user.accountBalanceMinor) %>）</option><% cards.filter((card) => card.status !== 'frozen').forEach((card) => { %><option value="<%= card.id %>"><%= formatCardLabel(card) %> · 余额 <%= formatMinor(card.balanceMinor) %></option><% }) %></select></label>
+      <label class="field"><span>转账金额（CNY）</span><input type="number" name="amount" min="0.01" step="0.01" required></label>
+      <div class="form-row">
+        <label class="field"><span>对方银行卡号</span><input name="recipient_card_number" inputmode="numeric" autocomplete="off" pattern="[0-9]{12,19}" required></label>
+        <label class="field"><span>对方用户名</span><input name="recipient_username" autocomplete="off" maxlength="32" required></label>
+      </div>
+      <label class="field"><span>转账备注</span><input name="note" maxlength="200" placeholder="可选"></label>
+      <p class="form-hint">转账费率 <%= settings.internal_transfer_fee_bps %> bps，最低手续费 CNY <%= formatMinor(settings.internal_transfer_min_fee_minor) %>。当前账户单笔限额：<%= effectiveLimitMinor === null ? '不限' : `CNY ${formatMinor(effectiveLimitMinor)}` %>。冻结卡不能作为付款来源；收款卡必须为可支付状态。</p>
+      <div class="form-actions"><button class="button button-primary" type="submit">确认信息并转账</button></div>
+    </form>
+  </section>
+  <section class="panel">
+    <div class="panel-head"><div><p class="eyebrow">ACCOUNT</p><h2>可用资金</h2></div></div>
+    <div class="amount">CNY <%= formatMinor(user.accountBalanceMinor) %></div>
+    <dl class="meta-list">
+      <div><dt>UID</dt><dd><code><%= user.uid %></code></dd></div>
+      <div><dt>用户名</dt><dd><%= user.username %></dd></div>
+      <div><dt>分组</dt><dd><%= user.groupName || 'Default' %></dd></div>
+      <div><dt>账户单笔限额</dt><dd><%= effectiveLimitMinor === null ? '不限' : `CNY ${formatMinor(effectiveLimitMinor)}` %></dd></div>
+    </dl>
+  </section>
+</div>
+<section class="panel">
+  <div class="panel-head"><div><p class="eyebrow">TRANSFER HISTORY</p><h2>最近转账</h2></div><span class="count-badge"><%= transfers.length %></span></div>
+  <% if (!transfers.length) { %><div class="empty-state compact">暂无转账记录。</div><% } else { %>
+  <div class="table-wrap"><table><thead><tr><th>时间</th><th>方向</th><th>付款人</th><th>收款人</th><th>来源</th><th>金额</th><th>手续费</th><th>流水号</th></tr></thead><tbody>
+    <% transfers.forEach((transfer) => { const outgoing = transfer.sender_user_id === user.id; %>
+      <tr>
+        <td><%= formatDateTime(transfer.created_at) %></td>
+        <td><span class="pill <%= outgoing ? 'pill-muted' : 'pill-success' %>"><%= outgoing ? '转出' : '转入' %></span></td>
+        <td><%= transfer.sender_username %></td>
+        <td><%= transfer.recipient_username %></td>
+        <td><%= transfer.source_type === 'account' ? '账户余额' : `银行卡 ***${transfer.source_last4 || '****'}` %><br><small>收款卡 ***<%= transfer.recipient_last4 || '****' %></small></td>
+        <td><strong>CNY <%= formatMinor(transfer.amount_minor) %></strong></td>
+        <td>CNY <%= formatMinor(transfer.fee_minor) %></td>
+        <td><code><%= transfer.reference %></code></td>
+      </tr>
+    <% }) %>
+  </tbody></table></div>
+  <% } %>
+</section>
+<%- include('../partials/admin-end') %>

@@ -6,13 +6,13 @@
     <% groups.forEach((group) => { %>
       <article class="list-card">
         <details class="inline-details" open>
-          <summary><strong><%= group.name %></strong><span><%= group.card_limit %> 张卡 · 每张开卡赠金 <%= formatMinor(group.card_bonus_minor) %> · 限额 <%= group.spend_limit_minor === null ? '不限' : formatMinor(group.spend_limit_minor) %></span></summary>
+          <summary><strong><%= group.name %></strong><span><%= group.card_limit %> 张卡 · 历史开卡赠金配置 <%= formatMinor(group.card_bonus_minor) %> · 单笔限额 <%= !group.spend_limit_minor ? '不限' : formatMinor(group.spend_limit_minor) %></span></summary>
           <form method="post" action="/admin/groups/<%= group.id %>/update" class="form-grid compact-grid">
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <label class="field"><span>开卡上限</span><input type="number" name="card_limit" min="0" value="<%= group.card_limit %>" required></label>
             <label class="field"><span>每张开卡赠金</span><input type="number" name="card_bonus" min="0" step="0.01" value="<%= formatMinor(group.card_bonus_minor) %>" required></label>
-            <label class="field"><span>账号消费限额</span><input type="number" name="spend_limit" min="0" step="0.01" value="<%= group.spend_limit_minor === null ? '' : formatMinor(group.spend_limit_minor) %>"></label>
-            <label class="field checkbox-field"><input type="checkbox" name="spend_limit_unlimited" value="1" <%= group.spend_limit_minor === null ? 'checked' : '' %>><span>不限制消费</span></label>
+            <label class="field"><span>分组单笔消费限额</span><input type="number" name="spend_limit" min="0" step="0.01" value="<%= group.spend_limit_minor === null ? '' : formatMinor(group.spend_limit_minor) %>"></label>
+            <label class="field checkbox-field"><input type="checkbox" name="spend_limit_unlimited" value="1" <%= !group.spend_limit_minor ? 'checked' : '' %>><span>不限制单笔消费（0 同样表示不限）</span></label>
             <div class="form-actions"><button class="button button-primary button-small" type="submit">保存 <%= group.name %></button></div>
           </form>
         </details>

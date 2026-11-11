@@ -19,6 +19,7 @@
       <div><dt>结算时间</dt><dd><%= order.settledAt ? formatDateTime(order.settledAt) : (order.settlementDueAt ? `担保至 ${formatDateTime(order.settlementDueAt)}` : '-') %></dd></div>
       <div><dt>佣金 / 净额</dt><dd><%= formatMinor(order.commissionMinor) %> / <%= formatMinor(order.merchantNetMinor) %></dd></div>
       <div><dt>已退款</dt><dd><%= formatMinor(order.refundedMinor) %></dd></div>
+      <% if (order.overdraftFeeMinor) { %><div><dt>透支手续费</dt><dd><%= formatMinor(order.overdraftFeeMinor) %>，已冲正 <%= formatMinor(order.refundedOverdraftFeeMinor) %></dd></div><% } %>
       <div><dt>客户端 IP</dt><dd><code><%= order.clientIp || '-' %></code></dd></div>
       <div><dt>创建入口</dt><dd><%= order.createdVia %></dd></div>
     </dl>

@@ -59,7 +59,11 @@
       <label class="field"><span>提现费率（bps）</span><input type="number" name="card_withdraw_fee_bps" min="0" max="10000" value="<%= settings.card_withdraw_fee_bps %>" required></label>
       <label class="field"><span>最低提现金额（CNY）</span><input type="number" name="card_min_withdraw" min="0" step="0.01" value="<%= formatMinor(settings.card_min_withdraw_minor) %>" required></label>
       <label class="field"><span>最低提现手续费（CNY）</span><input type="number" name="card_min_withdraw_fee" min="0" step="0.01" value="<%= formatMinor(settings.card_min_withdraw_fee_minor) %>" required></label>
+      <label class="field"><span>默认自助解冻费（CNY）</span><input type="number" name="card_unfreeze_fee" min="0" step="0.01" value="<%= formatMinor(settings.card_unfreeze_fee_minor) %>" required></label>
+      <label class="field"><span>站内转账费率（bps）</span><input type="number" name="internal_transfer_fee_bps" min="0" max="10000" value="<%= settings.internal_transfer_fee_bps %>" required></label>
+      <label class="field"><span>最低站内转账手续费（CNY）</span><input type="number" name="internal_transfer_min_fee" min="0" step="0.01" value="<%= formatMinor(settings.internal_transfer_min_fee_minor) %>" required></label>
     </div>
+    <p class="form-hint">卡 BIN 可以单独设置解冻费；留空时继承这里的默认解冻费。已开启透支的信用卡免收解冻费。站内转账手续费向付款方额外收取，收款方获得完整转账金额。</p>
   </section>
   <div class="form-actions"><button class="button button-primary" type="submit">保存全部系统设置</button></div>
 </form>

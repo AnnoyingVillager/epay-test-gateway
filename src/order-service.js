@@ -2,6 +2,13 @@ const crypto = require('node:crypto');
 const { normalizeParams, verifySign, parseMoneyToMinor, formatMinor } = require('./epay');
 const { getSetting, merchantByPid, cardById, orderByTradeNo } = require('./db');
 const { accountTransaction } = require('./account-service');
+const {
+  userSpendLimit,
+  cardSpendLimit,
+  applyCardDebit,
+  recordInsufficientFailure,
+  maybeFreezeForOverdraftWarning
+} = require('./card-service');
 
 class EpayError extends Error {
   constructor(message, code = 'INVALID_REQUEST', statusCode = 400, terminal = false) {
@@ -80,11 +87,7 @@ function rawOrder(db, tradeNo) { return db.prepare('SELECT * FROM orders WHERE t
 function settlementWindowSeconds(db) { return Math.max(60, Math.min(86400, Number.parseInt(getSetting(db, 'merchant_guarantee_seconds', '300'), 10) || 300)); }
 
 function effectiveSpendLimit(db, userId) {
-  if (!userId) return null;
-  const row = db.prepare(`SELECT u.spend_limit_minor AS user_limit, g.spend_limit_minor AS group_limit FROM users u LEFT JOIN user_groups g ON g.id = u.group_id WHERE u.id = ?`).get(Number(userId));
-  if (!row) return null;
-  if (row.user_limit === -1) return null;
-  return row.user_limit ?? row.group_limit ?? null;
+  return userSpendLimit(db, userId);
 }
 
 function spentMinor(db, userId) {
@@ -92,10 +95,8 @@ function spentMinor(db, userId) {
   return Number(db.prepare(`SELECT COALESCE(SUM(CASE WHEN o.status IN ('PAID', 'CHARGEBACK') AND o.money_minor > o.refunded_minor THEN o.money_minor - o.refunded_minor ELSE 0 END), 0) AS total FROM orders o WHERE o.payer_user_id = ? OR o.card_id IN (SELECT id FROM cards WHERE owner_user_id = ?)`).get(Number(userId), Number(userId)).total);
 }
 
-function ensureSpendLimit(db, userId, additionalMinor) {
-  if (!userId) return;
-  const limit = effectiveSpendLimit(db, userId);
-  if (limit !== null && limit !== undefined && spentMinor(db, userId) + Number(additionalMinor) > Number(limit)) throw new EpayError('Account spending limit exceeded', 'SPEND_LIMIT_EXCEEDED', 409, true);
+function ensureTransactionLimit(limit, amountMinor, message = 'Transaction spending limit exceeded') {
+  if (limit !== null && limit !== undefined && Number(amountMinor) > Number(limit)) throw new EpayError(message, 'SPEND_LIMIT_EXCEEDED', 409, true);
 }
 
 function settleMerchantBalance(db, order, grossMinor) {
@@ -181,7 +182,7 @@ function markOrderPaid({ db, config, tradeNo, pin }) {
     }
     if (card.binRequire3ds && (!pin || pin !== card.pin)) return { wrongPin: true, message: '3DS 密码错误', order: orderByTradeNo(db, tradeNo) };
     try {
-      ensureSpendLimit(db, card.ownerUserId, row.money_minor);
+      ensureTransactionLimit(cardSpendLimit(db, card), row.money_minor, 'Card transaction spending limit exceeded');
     } catch (error) {
       if (error instanceof EpayError && error.terminal) {
         db.prepare("UPDATE orders SET status = 'FAILED', closed_at = ?, callback_event = ? WHERE id = ? AND status = 'PENDING'").run(Date.now(), error.code, row.id);
@@ -189,21 +190,26 @@ function markOrderPaid({ db, config, tradeNo, pin }) {
       }
       throw error;
     }
-    if (card.balanceMinor < row.money_minor) {
+    const debit = applyCardDebit(db, card, row.money_minor, { note: `Payment ${row.trade_no}`, orderId: row.id });
+    if (!debit.ok) {
+      const failure = recordInsufficientFailure(db, card, debit.code);
       db.prepare("UPDATE orders SET status = 'FAILED', closed_at = ?, callback_event = 'INSUFFICIENT_FUNDS' WHERE id = ? AND status = 'PENDING'").run(Date.now(), row.id);
-      return { terminal: true, code: 'INSUFFICIENT_FUNDS', message: 'Insufficient card balance', order: orderByTradeNo(db, tradeNo) };
+      return {
+        terminal: true,
+        code: 'INSUFFICIENT_FUNDS',
+        message: failure.frozen ? `${debit.message}；连续 5 次失败，卡片已自动冻结` : debit.message,
+        order: orderByTradeNo(db, tradeNo)
+      };
     }
     const now = Date.now();
-    const newBalance = card.balanceMinor - row.money_minor;
-    db.prepare('UPDATE cards SET balance_minor = ?, last_used_at = ?, updated_at = ? WHERE id = ?').run(newBalance, now, now, card.id);
-    db.prepare(`INSERT INTO card_transactions (card_id, order_id, type, amount_minor, balance_after_minor, note, created_at) VALUES (?, ?, 'DEBIT', ?, ?, ?, ?)`).run(card.id, row.id, row.money_minor, newBalance, `Payment ${row.trade_no}`, now);
     const settlementMode = card.cardType === 'credit' ? 'guarantee' : 'immediate';
     const commissionBps = merchantCommissionBps(db, row.merchant_id);
     const due = settlementMode === 'guarantee' ? now + settlementWindowSeconds(db) * 1000 : null;
-    db.prepare(`UPDATE orders SET status = 'PAID', paid_at = ?, callback_event = 'PAYMENT_SUCCESS', payment_method = 'card', card_type_snapshot = ?, payer_user_id = ?, settlement_mode = ?, settlement_due_at = ?, commission_bps = ? WHERE id = ? AND status = 'PENDING'`)
-      .run(now, card.cardType, card.ownerUserId || null, settlementMode, due, commissionBps, row.id);
+    db.prepare(`UPDATE orders SET status = 'PAID', paid_at = ?, callback_event = 'PAYMENT_SUCCESS', payment_method = 'card', card_type_snapshot = ?, payer_user_id = ?, settlement_mode = ?, settlement_due_at = ?, commission_bps = ?, overdraft_fee_minor = ? WHERE id = ? AND status = 'PENDING'`)
+      .run(now, card.cardType, card.ownerUserId || null, settlementMode, due, commissionBps, debit.feeMinor, row.id);
     const paidRow = rawOrder(db, tradeNo);
     if (settlementMode === 'immediate') settleMerchantBalance(db, paidRow, paidRow.money_minor);
+    maybeFreezeForOverdraftWarning(db, card, debit.nextBalanceMinor, debit.config);
     return { paid: true, order: orderByTradeNo(db, tradeNo) };
   })();
 }
@@ -237,7 +243,7 @@ function payOrderWithAccount({ db, tradeNo, user }) {
     if (!account) throw new EpayError('User not found or disabled', 'USER_DISABLED', 403);
     if (account.account_risk === 'blocked') throw new EpayError('Account payment is blocked by risk control', 'ACCOUNT_RISK_BLOCKED', 403);
     try {
-      ensureSpendLimit(db, account.id, row.money_minor);
+      ensureTransactionLimit(userSpendLimit(db, account.id), row.money_minor, 'Account transaction spending limit exceeded');
     } catch (error) {
       if (error instanceof EpayError && error.terminal) {
         db.prepare("UPDATE orders SET status = 'FAILED', closed_at = ?, callback_event = ? WHERE id = ? AND status = 'PENDING'").run(Date.now(), error.code, row.id);
@@ -296,12 +302,20 @@ function refundOrder({ db, tradeNo, orderId, merchantId = null, amountMinor = nu
     const refundNo = createTradeNo('R');
     const now = Date.now();
     let channel = 'none';
+    let overdraftFeeRefundMinor = 0;
     if (row.card_id) {
       const card = db.prepare('SELECT * FROM cards WHERE id = ?').get(row.card_id);
       if (!card) throw new EpayError('Original card no longer exists', 'REFUND_SOURCE_MISSING', 409);
-      const nextBalance = Number(card.balance_minor) + refundMinor;
+      const feeTotal = Number(row.overdraft_fee_minor || 0);
+      const feeAlreadyRefunded = Number(row.refunded_overdraft_fee_minor || 0);
+      const feeRemaining = Math.max(0, feeTotal - feeAlreadyRefunded);
+      overdraftFeeRefundMinor = refundMinor === remaining
+        ? feeRemaining
+        : Math.min(feeRemaining, Math.floor(feeTotal * refundMinor / Number(row.money_minor)));
+      const creditMinor = refundMinor + overdraftFeeRefundMinor;
+      const nextBalance = Number(card.balance_minor) + creditMinor;
       db.prepare('UPDATE cards SET balance_minor = ?, updated_at = ? WHERE id = ?').run(nextBalance, now, card.id);
-      db.prepare(`INSERT INTO card_transactions (card_id, order_id, type, amount_minor, balance_after_minor, note, created_at) VALUES (?, ?, 'CREDIT', ?, ?, ?, ?)`).run(card.id, row.id, refundMinor, nextBalance, `Refund ${row.trade_no}`, now);
+      db.prepare(`INSERT INTO card_transactions (card_id, order_id, type, amount_minor, balance_after_minor, note, created_at) VALUES (?, ?, 'CREDIT', ?, ?, ?, ?)`).run(card.id, row.id, creditMinor, nextBalance, overdraftFeeRefundMinor ? `Refund ${row.trade_no}，含透支手续费冲正` : `Refund ${row.trade_no}`, now);
       channel = 'card';
     } else if (row.payer_user_id) {
       if (!db.prepare('SELECT id FROM users WHERE id = ?').get(row.payer_user_id)) throw new EpayError('Original account no longer exists', 'REFUND_SOURCE_MISSING', 409);
@@ -312,8 +326,10 @@ function refundOrder({ db, tradeNo, orderId, merchantId = null, amountMinor = nu
       .run(refundNo, row.id, row.merchant_id, outRefundNo || null, refundMinor, channel, String(reason || '').slice(0, 200), createdBy, now);
     const refundedMinor = Number(row.refunded_minor || 0) + refundMinor;
     const full = refundedMinor >= row.money_minor;
-    db.prepare(`UPDATE orders SET refunded_minor = ?, refunded_at = ?, callback_event = 'REFUND', status = CASE WHEN ? = 1 THEN 'CHARGEBACK' ELSE status END, closed_at = CASE WHEN ? = 1 THEN ? ELSE closed_at END, notify_state = 'NONE', notify_attempts = 0 WHERE id = ?`)
-      .run(refundedMinor, now, full ? 1 : 0, full ? 1 : 0, now, row.id);
+    db.prepare(`UPDATE orders SET refunded_minor = ?, refunded_overdraft_fee_minor = ?,
+      refunded_at = ?, callback_event = 'REFUND', status = CASE WHEN ? = 1 THEN 'CHARGEBACK' ELSE status END,
+      closed_at = CASE WHEN ? = 1 THEN ? ELSE closed_at END, notify_state = 'NONE', notify_attempts = 0 WHERE id = ?`)
+      .run(refundedMinor, Number(row.refunded_overdraft_fee_minor || 0) + overdraftFeeRefundMinor, now, full ? 1 : 0, full ? 1 : 0, now, row.id);
     return { refundNo, amountMinor: refundMinor, order: orderByTradeNo(db, row.trade_no), reused: false };
   })();
 }

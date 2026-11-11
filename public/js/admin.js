@@ -90,6 +90,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  const selectAllCards = document.querySelector('[data-select-all-cards]');
+  if (selectAllCards) {
+    selectAllCards.addEventListener('change', () => {
+      document.querySelectorAll('input[name="card_ids"]:not(:disabled)').forEach((box) => { box.checked = selectAllCards.checked; });
+    });
+  }
+
   document.querySelectorAll('form[data-confirm]').forEach((form) => {
     form.addEventListener('submit', (event) => {
       if (!window.confirm(form.getAttribute('data-confirm') || '确认继续？')) event.preventDefault();

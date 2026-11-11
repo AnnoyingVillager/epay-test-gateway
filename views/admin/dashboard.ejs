@@ -57,7 +57,7 @@
     <a class="quick-card" href="/admin/bins"><span>#</span><div><strong>管理卡 BIN</strong><small>配置品牌、前缀和卡号长度</small></div></a>
   <% } %>
   <% if (isAdmin) { %>
-    <a class="quick-card" href="/admin/users"><span>@</span><div><strong>用户管理</strong><small><%= isSuperAdmin ? '创建普通管理员或普通用户账号' : '创建普通用户并处理常规风控' %></small></div></a>
+    <a class="quick-card" href="/admin/users"><span>@</span><div><strong>用户管理</strong><small><%= isSuperAdmin ? '创建管理员或普通用户账号，并调整角色' : '创建普通用户并处理常规风控' %></small></div></a>
   <% } %>
   <% if (isSuperAdmin) { %>
     <a class="quick-card" href="/admin/merchants"><span>↗</span><div><strong>商户密钥</strong><small>查看商户 PID 与 MD5 密钥</small></div></a>

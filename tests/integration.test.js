@@ -442,8 +442,8 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   assert.equal(response.status, 403);
 
   response = await user.get('/admin/cards/new');
-  assert.match(response.text, /开卡赠金/);
-  assert.match(response.text, /Default 分组每张开卡赠送 700\.00 CNY/);
+  assert.match(response.text, /普通用户开卡初始余额固定为 0/);
+  assert.match(response.text, /分组开卡上限 5 张/);
   assert.doesNotMatch(response.text, /<input type="number" name="balance"/);
   csrf = csrfFrom(response.text);
   response = await user.post('/admin/cards').type('form').send({
@@ -461,7 +461,7 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   const userCreatedCard = appBundle.db.prepare('SELECT * FROM cards WHERE id = ?').get(userCreatedCardId);
   assert.equal(userCreatedCard.owner_user_id, normalUser.id);
   assert.equal(userCreatedCard.status, 'active');
-  assert.equal(userCreatedCard.balance_minor, 70000);
+  assert.equal(userCreatedCard.balance_minor, 0);
 
   response = await user.post(`/admin/cards/${userCreatedCardId}/delete`).type('form').send({ _csrf: userCsrf });
   assert.equal(response.status, 403);
@@ -696,22 +696,6 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   const deletableCardId = decodeURIComponent(response.headers.location.split('/admin/cards/')[1].split('?')[0]);
   response = await admin.get(`/admin/cards/${deletableCardId}`);
   csrf = csrfFrom(response.text);
-  response = await admin.post(`/admin/cards/${deletableCardId}/delete`).type('form').send({ _csrf: csrf });
-  assert.equal(response.status, 302);
-  assert.ok(appBundle.db.prepare('SELECT id FROM cards WHERE id = ?').get(deletableCardId));
-
-  response = await admin.post(`/admin/cards/${deletableCardId}/update`).type('form').send({
-    _csrf: csrf,
-    owner_user_id: String(normalUser.id),
-    status: 'active',
-    decline_reason: '',
-    balance: '0.00',
-    expires_month: '10',
-    expires_year: String(new Date().getFullYear() + 3),
-    pin: '975310',
-    cvv: '456'
-  });
-  assert.equal(response.status, 302);
   const pendingOrder = signedOrderParams('roles-merchant-key', {
     notify_url: `${callbackBase}/notify`,
     return_url: `${callbackBase}/return`,
@@ -723,14 +707,10 @@ test('admin and user roles, card ownership, manual consume and card binding flow
   const pendingTradeNo = response.body.trade_no;
   response = await admin.post(`/admin/cards/${deletableCardId}/delete`).type('form').send({ _csrf: csrf });
   assert.equal(response.status, 302);
-  assert.ok(appBundle.db.prepare('SELECT id FROM cards WHERE id = ?').get(deletableCardId));
-
-  appBundle.db.prepare("UPDATE orders SET status = 'EXPIRED', closed_at = ? WHERE trade_no = ?").run(Date.now(), pendingTradeNo);
-  response = await admin.post(`/admin/cards/${deletableCardId}/delete`).type('form').send({ _csrf: csrf });
-  assert.equal(response.status, 302);
   assert.equal(appBundle.db.prepare('SELECT id FROM cards WHERE id = ?').get(deletableCardId), undefined);
   assert.equal(appBundle.db.prepare('SELECT COUNT(*) AS count FROM card_transactions WHERE card_id = ?').get(deletableCardId).count, 0);
   assert.equal(appBundle.db.prepare('SELECT card_id FROM orders WHERE trade_no = ?').get(pendingTradeNo).card_id, null);
+  assert.equal(appBundle.db.prepare('SELECT status FROM orders WHERE trade_no = ?').get(pendingTradeNo).status, 'FAILED');
 
   response = await admin.get('/admin/bins');
   csrf = csrfFrom(response.text);

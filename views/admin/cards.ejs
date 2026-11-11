@@ -3,34 +3,66 @@
 <section class="panel">
   <div class="toolbar">
     <form method="get" action="/admin/cards" class="filter-form">
+      <% if (isAdmin) { %><label class="field inline-field"><span>范围</span><select name="scope"><option value="all" <%= scope === 'all' ? 'selected' : '' %>>全部可管理</option><option value="own" <%= scope === 'own' ? 'selected' : '' %>>本人名下</option></select></label><% } %>
+      <label class="field inline-field"><span>BIN</span><select name="bin_id"><option value="">全部 BIN</option><% bins.forEach((bin) => { %><option value="<%= bin.id %>" <%= binId === bin.id ? 'selected' : '' %>><%= bin.name %> · <%= bin.prefix %></option><% }) %></select></label>
       <label class="field inline-field"><span>状态</span><select name="status"><option value="">全部</option><option value="active" <%= status === 'active' ? 'selected' : '' %>>可支付</option><option value="declined" <%= status === 'declined' ? 'selected' : '' %>>模拟拒付</option><option value="frozen" <%= status === 'frozen' ? 'selected' : '' %>>已冻结</option></select></label>
-      <label class="field inline-field"><span>搜索</span><input name="q" value="<%= search %>" placeholder="BIN 前缀、尾号或卡 ID"></label>
+      <% if (isAdmin) { %><label class="field inline-field"><span>用户名</span><input name="q" value="<%= search %>" placeholder="用户名关键字"></label><% } %>
       <button class="button button-ghost button-small" type="submit">筛选</button>
     </form>
     <a class="button button-primary" href="/admin/cards/new">+ 创建虚拟卡</a>
   </div>
   <% if (!cards.length) { %>
-    <div class="empty-state"><strong>没有找到虚拟卡</strong><p><%= isSuperAdminUser ? '创建 BIN 后即可生成测试卡。' : '请联系超级管理员配置可用的卡 BIN，然后创建虚拟卡。' %></p><a class="button button-primary button-small" href="/admin/cards/new">创建虚拟卡</a></div>
+    <div class="empty-state"><strong>没有找到虚拟卡</strong><p><%= isSuperAdminUser ? '创建 BIN 后即可生成测试卡。' : '请调整筛选条件，或联系超级管理员配置可用的卡 BIN。' %></p><a class="button button-primary button-small" href="/admin/cards/new">创建虚拟卡</a></div>
   <% } else { %>
+  <% if (isAdmin) { %><form id="batch-cards" method="post" action="/admin/cards/batch"><input type="hidden" name="_csrf" value="<%= csrfToken %>"></form><% } %>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>卡片</th><th>BIN</th><% if (isAdmin) { %><th>所属用户</th><% } %><th>余额</th><th>状态</th><th>有效期</th><th>创建时间</th><th></th></tr></thead>
+      <thead><tr><% if (isAdmin) { %><th><input type="checkbox" data-select-all-cards aria-label="全选虚拟卡"></th><% } %><th>卡片</th><th>BIN</th><% if (isAdmin) { %><th>所属用户</th><% } %><th>余额</th><th>单笔限额</th><th>状态</th><th>有效期</th><th>创建时间</th><th></th></tr></thead>
       <tbody>
       <% cards.forEach((card) => { %>
         <tr>
+          <% if (isAdmin) { %><td><input form="batch-cards" type="checkbox" name="card_ids" value="<%= card.id %>" aria-label="选择 <%= formatCardShort(card) %>"></td><% } %>
           <td><div class="table-primary"><span class="mini-card"><%= card.brand.slice(0, 1) %></span><span><strong><%= formatCardShort(card) %></strong><small><%= card.binName %></small></span></div></td>
           <td><%= card.binName %><br><small><%= card.cardType === 'credit' ? '信用卡' : '借记卡' %></small></td>
-          <% if (isAdmin) { %><td><%= card.ownerUsername || '未分配' %></td><% } %>
+          <% if (isAdmin) { %><td><%= card.ownerUsername || '未分配' %><br><small>UID <%= card.ownerUid %></small></td><% } %>
           <td><strong><%= card.currency %> <%= formatMinor(card.balanceMinor) %></strong></td>
-          <td><span class="pill <%= card.status === 'active' ? 'pill-success' : 'pill-danger' %>"><%= statusLabel(card.status) %></span></td>
+          <td><%= card.spendLimitMode === 'custom' ? (card.spendLimitMinor ? `CNY ${formatMinor(card.spendLimitMinor)}` : '不限') : '继承' %></td>
+          <td><span class="pill <%= card.status === 'active' ? 'pill-success' : 'pill-danger' %>"><%= statusLabel(card.status) %></span><% if (card.status === 'frozen') { %><br><small><%= card.freezeSource === 'automatic' ? '自动风控' : '管理员' %></small><% } %></td>
           <td><%= String(card.expiresMonth).padStart(2, '0') %>/<%= card.expiresYear %></td>
           <td><%= formatDateTime(card.createdAt) %></td>
-          <td class="align-right"><a class="button button-ghost button-small" href="/admin/cards/<%= card.id %>">管理</a></td>
+          <td class="align-right">
+            <div class="button-row">
+              <% if (!isAdmin && card.status === 'frozen' && card.freezeSource === 'automatic') { %>
+                <form method="post" action="/admin/account/cards/<%= card.id %>/unfreeze" data-confirm="确认自助解冻？手续费将从账户余额扣除；透支卡免收解冻费。"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-primary button-small" type="submit">自助解冻</button></form>
+              <% } %>
+              <% if (!isAdmin && card.status !== 'frozen' && card.balanceMinor === 0) { %>
+                <form method="post" action="/admin/account/cards/<%= card.id %>/cancel" data-confirm="确认注销该虚拟卡？系统会再次检查余额和进行中的订单。"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-ghost button-small" type="submit">注销</button></form>
+              <% } %>
+              <a class="button button-ghost button-small" href="/admin/cards/<%= card.id %>">管理</a>
+            </div>
+          </td>
         </tr>
       <% }) %>
       </tbody>
     </table>
   </div>
+  <% if (isAdmin) { %>
+  <div class="form-grid compact-grid batch-panel">
+    <label class="field"><span>批量金额</span><input form="batch-cards" type="number" name="amount" min="0.01" step="0.01" placeholder="0.00"></label>
+    <label class="field"><span>限额模式</span><select form="batch-cards" name="limit_mode"><option value="inherit">继承用户/分组</option><option value="custom">单独设置</option></select></label>
+    <label class="field"><span>单笔限额（0=不限）</span><input form="batch-cards" type="number" name="limit_amount" min="0" step="0.01" placeholder="0.00"></label>
+    <label class="field"><span>风控原因</span><input form="batch-cards" name="reason" value="批量风控" maxlength="200"></label>
+    <div class="form-actions button-row">
+      <button form="batch-cards" class="button button-danger button-small" name="action" value="decline" type="submit" data-confirm="确认将选中的虚拟卡设为模拟拒付？">批量拒付</button>
+      <button form="batch-cards" class="button button-danger button-small" name="action" value="freeze" type="submit" data-confirm="确认冻结选中的虚拟卡？用户将无法发起支付。">批量冻结</button>
+      <button form="batch-cards" class="button button-ghost button-small" name="action" value="unfreeze" type="submit" data-confirm="确认管理员解冻选中的虚拟卡？管理员解冻不收取解冻费。">批量解控</button>
+      <button form="batch-cards" class="button button-ghost button-small" name="action" value="add_balance" type="submit" data-money-confirm data-confirm-title="确认批量增加卡余额" data-confirm-message="将向选中的每张卡增加相同金额。" data-confirm-action="确认增加" data-confirm-currency="CNY" data-confirm-amount-field="amount" data-confirm-note="信用卡负余额不能超过其透支额度。">增加余额</button>
+      <button form="batch-cards" class="button button-ghost button-small" name="action" value="subtract_balance" type="submit" data-money-confirm data-confirm-title="确认批量减少卡余额" data-confirm-message="将从选中的每张卡扣除相同金额。" data-confirm-action="确认减少" data-confirm-tone="danger" data-confirm-currency="CNY" data-confirm-amount-field="amount" data-confirm-note="信用卡扣减后不得低于可用透支额度下限。">减少余额</button>
+      <button form="batch-cards" class="button button-ghost button-small" name="action" value="set_limit" type="submit" data-confirm="确认批量设置卡片单笔消费限额？">设置限额</button>
+      <button form="batch-cards" class="button button-danger button-small" name="action" value="delete" type="submit" data-confirm="确认强制删除选中的虚拟卡？将忽略余额和冻结/拒付状态；PENDING 订单会置为失败，待结算信用卡订单会阻止删除。">快速删除</button>
+    </div>
+  </div>
+  <% } %>
   <% } %>
 </section>
 <%- include('../partials/admin-end') %>

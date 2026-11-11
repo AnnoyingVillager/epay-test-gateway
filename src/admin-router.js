@@ -17,6 +17,7 @@ const {
   mapMerchant,
   mapOrder,
   mapUser,
+  cardById,
   userById
 } = require('./db');
 const {
@@ -30,6 +31,8 @@ const {
   userSessionFromRequest
 } = require('./admin-auth');
 const { simulateChargeback, refundOrder, renderOrderContext, EpayError } = require('./order-service');
+const { internalTransfer, cancelOwnCard, unfreezeCard } = require('./account-service');
+const { cardSpendLimit, resolvedOverdraft, applyCardDebit, recordInsufficientFailure, maybeFreezeForOverdraftWarning } = require('./card-service');
 const { emailVerificationConfigured, sendPasswordResetCode, resetPassword } = require('./password-service');
 const { isSuperAdmin, canManageCardOwner, canRefundOrder, requireSuperAdmin } = require('./permissions');
 const userAdminRouter = require('./user-admin-router');
@@ -41,6 +44,16 @@ function moneyInput(value, { allowZero = true } = {}) {
   const minor = Number(whole) * 100 + Number(decimals.padEnd(2, '0'));
   if (!Number.isSafeInteger(minor) || (!allowZero && minor === 0)) return null;
   return minor;
+}
+
+function signedMoneyInput(value) {
+  const raw = String(value ?? '').trim();
+  if (!/^-?\d{1,10}(?:\.\d{1,2})?$/.test(raw)) return null;
+  const negative = raw.startsWith('-');
+  const unsigned = negative ? raw.slice(1) : raw;
+  const minor = moneyInput(unsigned, { allowZero: true });
+  if (minor === null) return null;
+  return negative ? -minor : minor;
 }
 
 function integer(value, min, max) {
@@ -92,9 +105,15 @@ function router({ db, config, notification, logger }) {
   const superAdminOnly = requireSuperAdmin;
 
   function orderScope(req) {
-    return req.user.role === 'admin'
-      ? { condition: '', params: [] }
-      : { condition: '(o.payer_user_id = ? OR o.card_id IN (SELECT id FROM cards WHERE owner_user_id = ?))', params: [req.user.id, req.user.id] };
+    if (req.user.role !== 'admin') {
+      return { condition: '(o.payer_user_id = ? OR o.card_id IN (SELECT id FROM cards WHERE owner_user_id = ?))', params: [req.user.id, req.user.id] };
+    }
+    if (isSuperAdmin(req.user)) return { condition: '', params: [] };
+    return {
+      condition: `(o.card_id IS NULL OR o.card_id IN (SELECT id FROM cards WHERE owner_user_id = ?)
+        OR o.card_id IN (SELECT c.id FROM cards c JOIN users u ON u.id = c.owner_user_id WHERE u.role <> 'admin'))`,
+      params: [req.user.id]
+    };
   }
 
   function cardAccessCondition(req) {
@@ -122,7 +141,7 @@ function router({ db, config, notification, logger }) {
   function denyCardManagement(res) {
     return res.status(403).render('error', {
       title: '没有访问权限',
-      message: '普通管理员不能查看或修改其他管理员名下的卡片。',
+      message: '管理员不能查看或修改其他管理员名下的卡片。',
       statusCode: 403
     });
   }
@@ -239,19 +258,21 @@ function router({ db, config, notification, logger }) {
 
   route.get('/', (req, res) => {
     const isAdmin = req.user.role === 'admin';
-    const cardWhere = isAdmin ? '' : 'WHERE owner_user_id = ?';
-    const cardParams = isAdmin ? [] : [req.user.id];
-    const orderWhere = isAdmin ? '' : "WHERE payer_user_id = ? OR card_id IN (SELECT id FROM cards WHERE owner_user_id = ?)";
-    const orderParams = isAdmin ? [] : [req.user.id, req.user.id];
+    const cardAccess = cardAccessCondition(req);
+    const cardWhere = cardAccess.condition ? `WHERE ${cardAccess.condition.replace(/^AND\s+/, '')}` : '';
+    const cardParams = cardAccess.params;
+    const orderScopeValue = orderScope(req);
+    const orderWhere = orderScopeValue.condition ? `WHERE ${orderScopeValue.condition}` : '';
+    const orderParams = orderScopeValue.params;
     const stats = {
-      cards: db.prepare(`SELECT COUNT(*) AS count FROM cards ${cardWhere}`).get(...cardParams).count,
-      activeCards: db.prepare(`SELECT COUNT(*) AS count FROM cards ${cardWhere ? `${cardWhere} AND` : 'WHERE'} status = 'active'`).get(...cardParams).count,
-      balance: db.prepare(`SELECT COALESCE(SUM(balance_minor), 0) AS amount FROM cards ${cardWhere}`).get(...cardParams).amount,
-      orders: db.prepare(`SELECT COUNT(*) AS count FROM orders ${orderWhere}`).get(...orderParams).count,
-      pending: db.prepare(`SELECT COUNT(*) AS count FROM orders ${orderWhere ? `${orderWhere} AND` : 'WHERE'} status = 'PENDING'`).get(...orderParams).count,
-      paid: db.prepare(`SELECT COUNT(*) AS count FROM orders ${orderWhere ? `${orderWhere} AND` : 'WHERE'} status = 'PAID'`).get(...orderParams).count,
-      failed: db.prepare(`SELECT COUNT(*) AS count FROM orders ${orderWhere ? `${orderWhere} AND` : 'WHERE'} status IN ('FAILED', 'EXPIRED')`).get(...orderParams).count,
-      paidVolume: db.prepare(`SELECT COALESCE(SUM(money_minor), 0) AS amount FROM orders ${orderWhere ? `${orderWhere} AND` : 'WHERE'} status = 'PAID'`).get(...orderParams).amount
+      cards: db.prepare(`SELECT COUNT(*) AS count FROM cards c ${cardWhere}`).get(...cardParams).count,
+      activeCards: db.prepare(`SELECT COUNT(*) AS count FROM cards c ${cardWhere ? `${cardWhere} AND` : 'WHERE'} c.status = 'active'`).get(...cardParams).count,
+      balance: db.prepare(`SELECT COALESCE(SUM(c.balance_minor), 0) AS amount FROM cards c ${cardWhere}`).get(...cardParams).amount,
+      orders: db.prepare(`SELECT COUNT(*) AS count FROM orders o ${orderWhere}`).get(...orderParams).count,
+      pending: db.prepare(`SELECT COUNT(*) AS count FROM orders o ${orderWhere ? `${orderWhere} AND` : 'WHERE'} o.status = 'PENDING'`).get(...orderParams).count,
+      paid: db.prepare(`SELECT COUNT(*) AS count FROM orders o ${orderWhere ? `${orderWhere} AND` : 'WHERE'} o.status = 'PAID'`).get(...orderParams).count,
+      failed: db.prepare(`SELECT COUNT(*) AS count FROM orders o ${orderWhere ? `${orderWhere} AND` : 'WHERE'} o.status IN ('FAILED', 'EXPIRED')`).get(...orderParams).count,
+      paidVolume: db.prepare(`SELECT COALESCE(SUM(o.money_minor), 0) AS amount FROM orders o ${orderWhere ? `${orderWhere} AND` : 'WHERE'} o.status = 'PAID'`).get(...orderParams).amount
     };
     const recentSql = orderQuery(orderWhere, orderParams, 8);
     const recentOrders = db.prepare(recentSql.sql).all(...recentSql.params).map(mapOrder);
@@ -283,21 +304,29 @@ function router({ db, config, notification, logger }) {
     const country = String(req.body.country || 'CN').trim().toUpperCase();
     const numberLength = integer(req.body.number_length, 12, 19);
     const require3ds = req.body.require_3ds === undefined ? 1 : (req.body.require_3ds === '1' ? 1 : 0);
+    const overdraftLimit = moneyInput(req.body.overdraft_limit ?? '5000', { allowZero: true });
+    const overdraftFeeBps = integer(req.body.overdraft_fee_bps ?? 500, 0, 10000);
+    const overdraftMinFee = moneyInput(req.body.overdraft_min_fee ?? '1', { allowZero: true });
+    const overdraftWarningBps = integer(req.body.overdraft_warning_bps ?? 9500, 1, 10000);
+    const unfreezeFee = String(req.body.unfreeze_fee ?? '').trim() === '' ? null : moneyInput(req.body.unfreeze_fee, { allowZero: true });
     const groupSelectionProvided = req.body.group_ids_present === '1' || Object.prototype.hasOwnProperty.call(req.body, 'group_ids');
     const groupIds = Object.prototype.hasOwnProperty.call(req.body, 'group_ids')
       ? numericIds(req.body.group_ids)
       : (groupSelectionProvided ? [] : db.prepare('SELECT id FROM user_groups ORDER BY id').all().map((group) => group.id));
     const validGroupIds = new Set(db.prepare('SELECT id FROM user_groups').all().map((group) => group.id));
-    if (!name || prefix.length < 4 || prefix.length > 8 || numberLength === null || prefix.length >= numberLength || !['debit', 'credit'].includes(cardType) || !groupIds.length || !groupIds.every((id) => validGroupIds.has(id))) {
+    if (!name || prefix.length < 4 || prefix.length > 8 || numberLength === null || prefix.length >= numberLength || !['debit', 'credit'].includes(cardType) || !groupIds.length || !groupIds.every((id) => validGroupIds.has(id)) || overdraftLimit === null || overdraftFeeBps === null || overdraftMinFee === null || overdraftWarningBps === null || (String(req.body.unfreeze_fee ?? '').trim() !== '' && unfreezeFee === null)) {
       return redirectMessage(res, '/admin/bins', 'error', '请填写有效 BIN、卡类型并至少选择一个可用分组。');
     }
     try {
       const now = Date.now();
       db.transaction(() => {
         const result = db.prepare(`
-          INSERT INTO bins (name, prefix, brand, card_type, country, number_length, require_3ds, is_active, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-        `).run(name, prefix, brand || 'Visa', cardType, country || 'CN', numberLength, require3ds, now, now);
+          INSERT INTO bins (name, prefix, brand, card_type, country, number_length, require_3ds,
+            overdraft_limit_minor, overdraft_fee_bps, overdraft_min_fee_minor, overdraft_warning_bps, unfreeze_fee_minor,
+            is_active, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+        `).run(name, prefix, brand || 'Visa', cardType, country || 'CN', numberLength, require3ds,
+          overdraftLimit, overdraftFeeBps, overdraftMinFee, overdraftWarningBps, unfreezeFee, now, now);
         const insert = db.prepare('INSERT INTO bin_groups (bin_id, group_id) VALUES (?, ?)');
         for (const groupId of groupIds) insert.run(Number(result.lastInsertRowid), groupId);
       })();
@@ -318,20 +347,33 @@ function router({ db, config, notification, logger }) {
     const numberLength = integer(req.body.number_length, 12, 19);
     const isActive = req.body.is_active === undefined ? 1 : (req.body.is_active === '1' ? 1 : 0);
     const require3ds = req.body.require_3ds === undefined ? 1 : (req.body.require_3ds === '1' ? 1 : 0);
+    const overdraftLimit = moneyInput(req.body.overdraft_limit ?? '5000', { allowZero: true });
+    const overdraftFeeBps = integer(req.body.overdraft_fee_bps ?? 500, 0, 10000);
+    const overdraftMinFee = moneyInput(req.body.overdraft_min_fee ?? '1', { allowZero: true });
+    const overdraftWarningBps = integer(req.body.overdraft_warning_bps ?? 9500, 1, 10000);
+    const unfreezeFee = String(req.body.unfreeze_fee ?? '').trim() === '' ? null : moneyInput(req.body.unfreeze_fee, { allowZero: true });
     const groupSelectionProvided = req.body.group_ids_present === '1' || Object.prototype.hasOwnProperty.call(req.body, 'group_ids');
     const groupIds = Object.prototype.hasOwnProperty.call(req.body, 'group_ids')
       ? numericIds(req.body.group_ids)
       : (groupSelectionProvided ? [] : db.prepare('SELECT group_id FROM bin_groups WHERE bin_id = ?').all(id).map((row) => row.group_id));
     const validGroupIds = new Set(db.prepare('SELECT id FROM user_groups').all().map((group) => group.id));
-    if (!id || !name || prefix.length < 4 || prefix.length > 8 || numberLength === null || prefix.length >= numberLength || !['debit', 'credit'].includes(cardType) || !groupIds.length || !groupIds.every((groupId) => validGroupIds.has(groupId))) {
+    const existingBin = db.prepare('SELECT card_type FROM bins WHERE id = ?').get(id);
+    const existingCardCount = db.prepare('SELECT COUNT(*) AS count FROM cards WHERE bin_id = ?').get(id).count;
+    if (!id || !name || prefix.length < 4 || prefix.length > 8 || numberLength === null || prefix.length >= numberLength || !['debit', 'credit'].includes(cardType) || !groupIds.length || !groupIds.every((groupId) => validGroupIds.has(groupId)) || overdraftLimit === null || overdraftFeeBps === null || overdraftMinFee === null || overdraftWarningBps === null || (String(req.body.unfreeze_fee ?? '').trim() !== '' && unfreezeFee === null)) {
       return redirectMessage(res, '/admin/bins', 'error', 'BIN 参数无效。');
+    }
+    if (existingBin && existingBin.card_type !== cardType && existingCardCount > 0) {
+      return redirectMessage(res, '/admin/bins', 'error', '该 BIN 已有虚拟卡，不能直接更改借记卡/信用卡类型。请先清空该 BIN 下的卡。');
     }
     try {
       db.transaction(() => {
         db.prepare(`
-          UPDATE bins SET name = ?, prefix = ?, brand = ?, card_type = ?, country = ?, number_length = ?, require_3ds = ?, is_active = ?, updated_at = ?
+          UPDATE bins SET name = ?, prefix = ?, brand = ?, card_type = ?, country = ?, number_length = ?, require_3ds = ?,
+            overdraft_limit_minor = ?, overdraft_fee_bps = ?, overdraft_min_fee_minor = ?, overdraft_warning_bps = ?, unfreeze_fee_minor = ?,
+            is_active = ?, updated_at = ?
           WHERE id = ?
-        `).run(name, prefix, brand || 'Visa', cardType, country || 'CN', numberLength, require3ds, isActive, Date.now(), id);
+        `).run(name, prefix, brand || 'Visa', cardType, country || 'CN', numberLength, require3ds,
+          overdraftLimit, overdraftFeeBps, overdraftMinFee, overdraftWarningBps, unfreezeFee, isActive, Date.now(), id);
         db.prepare('DELETE FROM bin_groups WHERE bin_id = ?').run(id);
         const insert = db.prepare('INSERT INTO bin_groups (bin_id, group_id) VALUES (?, ?)');
         for (const groupId of groupIds) insert.run(id, groupId);
@@ -364,33 +406,100 @@ function router({ db, config, notification, logger }) {
   route.get('/cards', (req, res) => {
     const status = String(req.query.status || '');
     const search = String(req.query.q || '').trim();
+    const scope = req.user.role === 'admin' ? String(req.query.scope || 'all') : 'own';
+    const binId = integer(req.query.bin_id || '', 1, Number.MAX_SAFE_INTEGER);
     const conditions = [];
     const params = [];
-    let ownerUid = null;
-    if (req.user.role === 'admin' && req.query.owner_uid !== undefined) {
-      ownerUid = req.query.owner_uid;
-      const owner = db.prepare('SELECT id FROM users WHERE uid = ?').get(Number(ownerUid));
-      if (owner) { conditions.push('c.owner_user_id = ?'); params.push(owner.id); }
-      else conditions.push('1 = 0');
-    } else if (req.user.role !== 'admin') {
+    if (req.user.role !== 'admin') {
       conditions.push('c.owner_user_id = ?');
       params.push(req.user.id);
-    }
-    const access = cardAccessCondition(req);
-    if (access.condition) {
-      conditions.push(access.condition.replace(/^AND\s+/, ''));
-      params.push(...access.params);
+    } else if (scope === 'own') {
+      conditions.push('c.owner_user_id = ?');
+      params.push(req.user.id);
+    } else {
+      const access = cardAccessCondition(req);
+      if (access.condition) {
+        conditions.push(access.condition.replace(/^AND\s+/, ''));
+        params.push(...access.params);
+      }
     }
     if (allowedCardStatuses.has(status)) { conditions.push('c.status = ?'); params.push(status); }
-    if (search) { conditions.push('(c.id LIKE ? OR c.last4 LIKE ? OR b.prefix LIKE ?)'); params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
+    if (binId) { conditions.push('c.bin_id = ?'); params.push(binId); }
+    if (search) { conditions.push('u.username LIKE ?'); params.push(`%${search}%`); }
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const cards = db.prepare(`
       SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, b.require_3ds AS bin_require_3ds,
+        b.overdraft_limit_minor AS bin_overdraft_limit_minor, b.overdraft_fee_bps AS bin_overdraft_fee_bps,
+        b.overdraft_min_fee_minor AS bin_overdraft_min_fee_minor, b.overdraft_warning_bps AS bin_overdraft_warning_bps,
+        b.unfreeze_fee_minor AS bin_unfreeze_fee_minor,
         u.username AS owner_username, u.uid AS owner_uid
       FROM cards c JOIN bins b ON b.id = c.bin_id LEFT JOIN users u ON u.id = c.owner_user_id
       ${where} ORDER BY c.created_at DESC LIMIT 300
     `).all(...params).map((row) => mapCard(row, config.appSecret, false));
-    res.render('admin/cards', { title: ownerUid ? `用户 UID ${ownerUid} 的虚拟卡` : '我的虚拟卡', cards, status, search, isAdmin: req.user.role === 'admin' });
+    res.render('admin/cards', {
+      title: '虚拟卡管理', cards, status, search, scope, binId,
+      bins: db.prepare('SELECT id, name, prefix, card_type FROM bins ORDER BY name').all(),
+      isAdmin: req.user.role === 'admin'
+    });
+  });
+
+  route.post('/cards/batch', adminOnly, (req, res) => {
+    const cardIds = [...new Set([].concat(req.body.card_ids || []).map((id) => String(id || '').trim()).filter(Boolean))];
+    const action = String(req.body.action || '');
+    if (!cardIds.length || !['decline', 'freeze', 'unfreeze', 'add_balance', 'subtract_balance', 'set_limit', 'delete'].includes(action)) {
+      return redirectMessage(res, '/admin/cards', 'error', '请选择虚拟卡和有效的批量操作。');
+    }
+    const rows = db.prepare(`
+      SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, b.require_3ds AS bin_require_3ds,
+        b.overdraft_limit_minor AS bin_overdraft_limit_minor, b.overdraft_fee_bps AS bin_overdraft_fee_bps,
+        b.overdraft_min_fee_minor AS bin_overdraft_min_fee_minor, b.overdraft_warning_bps AS bin_overdraft_warning_bps,
+        b.unfreeze_fee_minor AS bin_unfreeze_fee_minor,
+        u.username AS owner_username, u.uid AS owner_uid, u.role AS owner_role
+      FROM cards c JOIN bins b ON b.id = c.bin_id LEFT JOIN users u ON u.id = c.owner_user_id
+      WHERE c.id IN (${cardIds.map(() => '?').join(',')})
+    `).all(...cardIds);
+    const eligible = rows.filter((row) => canManageCardOwner(req.user, db.prepare('SELECT * FROM users WHERE id = ?').get(Number(row.owner_user_id))));
+    if (!eligible.length) return redirectMessage(res, '/admin/cards', 'error', '所选卡片均无权由当前管理员管理。');
+    const amount = ['add_balance', 'subtract_balance'].includes(action) ? moneyInput(req.body.amount, { allowZero: false }) : null;
+    if (['add_balance', 'subtract_balance'].includes(action) && amount === null) return redirectMessage(res, '/admin/cards', 'error', '请输入有效的批量金额。');
+    const limitMode = req.body.limit_mode === 'custom' ? 'custom' : 'inherit';
+    const limitMinor = limitMode === 'custom' ? moneyInput(req.body.limit_amount, { allowZero: true }) : null;
+    if (action === 'set_limit' && limitMode === 'custom' && limitMinor === null) return redirectMessage(res, '/admin/cards', 'error', '请输入有效的卡片单笔消费限额。');
+    const reason = String(req.body.reason || (action === 'decline' ? '批量模拟拒付' : '批量风控冻结')).trim().slice(0, 200);
+    let skipped = rows.length - eligible.length;
+    const failedPendingOrderIds = [];
+    db.transaction(() => {
+      for (const row of eligible) {
+        const card = mapCard(row, config.appSecret, false);
+        if (action === 'decline') {
+          db.prepare("UPDATE cards SET status = 'declined', decline_reason = ?, freeze_source = 'none', freeze_code = NULL, updated_at = ? WHERE id = ?").run(reason || '批量模拟拒付', Date.now(), card.id);
+        } else if (action === 'freeze') {
+          db.prepare("UPDATE cards SET status = 'frozen', decline_reason = ?, freeze_source = 'admin', freeze_code = 'ADMIN', updated_at = ? WHERE id = ?").run(reason || '批量风控冻结', Date.now(), card.id);
+        } else if (action === 'unfreeze') {
+          db.prepare("UPDATE cards SET status = 'active', decline_reason = NULL, freeze_source = 'none', freeze_code = NULL, consecutive_failures = 0, updated_at = ? WHERE id = ?").run(Date.now(), card.id);
+        } else if (action === 'set_limit') {
+          db.prepare('UPDATE cards SET spend_limit_mode = ?, spend_limit_minor = ?, updated_at = ? WHERE id = ?').run(limitMode, limitMinor, Date.now(), card.id);
+        } else if (action === 'add_balance' || action === 'subtract_balance') {
+          const delta = action === 'add_balance' ? amount : -amount;
+          const next = Number(row.balance_minor) + delta;
+          const overdraft = resolvedOverdraft(row);
+          if (next < (overdraft.enabled ? -overdraft.limitMinor : 0)) { skipped += 1; continue; }
+          db.prepare('UPDATE cards SET balance_minor = ?, updated_at = ? WHERE id = ?').run(next, Date.now(), card.id);
+          db.prepare(`INSERT INTO card_transactions (card_id, order_id, type, amount_minor, balance_after_minor, note, created_at)
+            VALUES (?, NULL, 'ADJUSTMENT', ?, ?, ?, ?)`).run(card.id, delta, next, `管理员批量${delta >= 0 ? '增加' : '减少'}余额`, Date.now());
+        } else if (action === 'delete') {
+          const unsettledPaid = db.prepare("SELECT COUNT(*) AS count FROM orders WHERE card_id = ? AND status = 'PAID' AND settled_at IS NULL").get(card.id).count;
+          if (unsettledPaid) { skipped += 1; continue; }
+          failedPendingOrderIds.push(...db.prepare("SELECT id FROM orders WHERE card_id = ? AND status = 'PENDING'").all(card.id).map((order) => order.id));
+          db.prepare("UPDATE orders SET status = 'FAILED', card_id = NULL, closed_at = ?, callback_event = 'CARD_DELETED_BY_ADMIN' WHERE card_id = ? AND status = 'PENDING'").run(Date.now(), card.id);
+          db.prepare('UPDATE orders SET card_id = NULL WHERE card_id = ?').run(card.id);
+          db.prepare('DELETE FROM card_transactions WHERE card_id = ?').run(card.id);
+          db.prepare('DELETE FROM cards WHERE id = ?').run(card.id);
+        }
+      }
+    })();
+    for (const orderId of failedPendingOrderIds) notification.enqueue(orderId);
+    return redirectMessage(res, '/admin/cards', 'ok', `批量操作已处理 ${eligible.length - Math.max(0, skipped - (rows.length - eligible.length))} 张卡${skipped ? `，跳过 ${skipped} 张无权限或不符合条件的卡` : ''}。`);
   });
 
   route.get('/cards/new', (req, res) => {
@@ -421,19 +530,34 @@ function router({ db, config, notification, logger }) {
     const expiresYear = normalizeYear(req.body.expires_year);
     const cvv = String(req.body.cvv || '').trim();
     let pin = String(req.body.pin || '').trim();
-    const status = owner?.role === 'admin' ? String(req.body.status || 'active') : 'active';
-    const declineReason = owner?.role === 'admin' ? String(req.body.decline_reason || '').trim() : '';
-    const balanceMinor = owner?.role === 'admin' ? moneyInput(req.body.balance, { allowZero: true }) : Number(owner?.card_bonus_minor || 0);
+    const status = isAdmin ? String(req.body.status || 'active') : 'active';
+    const declineReason = isAdmin ? String(req.body.decline_reason || '').trim() : '';
+    const balanceMinor = isAdmin ? signedMoneyInput(req.body.balance ?? '0') : 0;
+    const spendLimitMode = req.body.spend_limit_mode === 'custom' ? 'custom' : 'inherit';
+    const spendLimitMinor = spendLimitMode === 'custom' ? moneyInput(req.body.spend_limit, { allowZero: true }) : null;
+    const overdraftMode = req.body.overdraft_mode === 'custom' ? 'custom' : 'inherit';
+    const overdraftLimitMinor = overdraftMode === 'custom' ? moneyInput(req.body.overdraft_limit ?? '5000', { allowZero: true }) : null;
+    const overdraftFeeBps = overdraftMode === 'custom' ? integer(req.body.overdraft_fee_bps ?? '500', 0, 10000) : null;
+    const overdraftMinFeeMinor = overdraftMode === 'custom' ? moneyInput(req.body.overdraft_min_fee ?? '0.01', { allowZero: true }) : null;
+    const overdraftWarningBps = overdraftMode === 'custom' ? integer(req.body.overdraft_warning_bps ?? '9500', 1, 10000) : null;
     if (!pin && bin && !bin.require_3ds) pin = randomDigits(6);
     const cardCount = db.prepare('SELECT COUNT(*) AS count FROM cards WHERE owner_user_id = ?').get(ownerId).count;
     const overCardLimit = owner?.role !== 'admin' && cardCount >= Number(owner?.card_limit || 0);
     const overBalanceLimit = owner?.card_balance_limit_minor !== null && owner?.card_balance_limit_minor !== undefined && balanceMinor > owner.card_balance_limit_minor;
+    const plannedCard = {
+      cardType: bin?.card_type, balanceMinor, overdraftMode, overdraftLimitMinor, overdraftFeeBps,
+      overdraftMinFeeMinor, overdraftWarningBps, binOverdraftLimitMinor: bin?.overdraft_limit_minor,
+      binOverdraftFeeBps: bin?.overdraft_fee_bps, binOverdraftMinFeeMinor: bin?.overdraft_min_fee_minor,
+      binOverdraftWarningBps: bin?.overdraft_warning_bps
+    };
+    const plannedOverdraft = resolvedOverdraft(plannedCard);
+    const invalidNegativeBalance = balanceMinor < (plannedOverdraft.enabled ? -plannedOverdraft.limitMinor : 0);
     const currentYear = new Date().getFullYear();
-    if (!owner || !bin || overCardLimit || overBalanceLimit || expiresMonth === null || expiresYear === null || expiresYear < currentYear || expiresYear > currentYear + 30 || !/^\d{3,4}$/.test(cvv) || (bin.require_3ds && (pin.length < 4 || pin.length > 64)) || (pin && (pin.length < 4 || pin.length > 64)) || balanceMinor === null || !allowedCardStatuses.has(status)) {
+    if (!owner || !bin || overCardLimit || overBalanceLimit || expiresMonth === null || expiresYear === null || expiresYear < currentYear || expiresYear > currentYear + 30 || !/^\d{3,4}$/.test(cvv) || (bin.require_3ds && (pin.length < 4 || pin.length > 64)) || (pin && (pin.length < 4 || pin.length > 64)) || balanceMinor === null || invalidNegativeBalance || (spendLimitMode === 'custom' && spendLimitMinor === null) || (overdraftMode === 'custom' && (overdraftLimitMinor === null || overdraftFeeBps === null || overdraftMinFeeMinor === null || overdraftWarningBps === null)) || !allowedCardStatuses.has(status)) {
       return res.status(400).render('admin/card-new', {
         title: '创建虚拟卡', bins, users,
         group: db.prepare('SELECT * FROM user_groups WHERE id = ?').get(owner?.group_id),
-        error: overCardLimit ? '已达到当前分组的开卡数量上限。' : (overBalanceLimit ? '开卡赠金超过账号卡面额度。' : '请检查卡片参数、BIN 分组权限和 3DS 配置。'),
+        error: overCardLimit ? '已达到当前分组的开卡数量上限。' : (overBalanceLimit ? '初始余额超过账号卡面额度。' : (invalidNegativeBalance ? '负余额超过该卡可用透支额度。' : '请检查卡片参数、限额、BIN 分组权限和 3DS 配置。')),
         form: req.body, isAdmin, currentUser: req.user
       });
     }
@@ -445,12 +569,16 @@ function router({ db, config, notification, logger }) {
       db.prepare(`
         INSERT INTO cards (
           id, owner_user_id, bin_id, card_number_enc, card_number_hash, last4, expires_month, expires_year, cvv_enc, pin_enc,
-          balance_minor, currency, status, decline_reason, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          balance_minor, currency, status, decline_reason, freeze_source, freeze_code, spend_limit_mode, spend_limit_minor, overdraft_mode,
+          overdraft_limit_minor, overdraft_fee_bps, overdraft_min_fee_minor, overdraft_warning_bps, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         cardId, ownerId, bin.id, encrypt(cardNumber, config.appSecret), cardNumberHash(cardNumber, config.appSecret),
         cardNumber.slice(-4), expiresMonth, expiresYear, encrypt(cvv, config.appSecret), encrypt(pin, config.appSecret), balanceMinor,
-        getSetting(db, 'default_currency', 'CNY'), status, status === 'declined' ? declineReason || '测试拒付' : null, now, now
+        getSetting(db, 'default_currency', 'CNY'), status, status === 'declined' ? declineReason || '测试拒付' : null,
+        status === 'frozen' ? 'admin' : 'none', status === 'frozen' ? 'ADMIN' : null,
+        spendLimitMode, spendLimitMinor, overdraftMode, overdraftLimitMinor, overdraftFeeBps, overdraftMinFeeMinor,
+        overdraftWarningBps, now, now
       );
       db.prepare(`
         INSERT INTO card_transactions (card_id, order_id, type, amount_minor, balance_after_minor, note, created_at)
@@ -464,6 +592,9 @@ function router({ db, config, notification, logger }) {
     const access = cardAccessCondition(req);
     const row = db.prepare(`
       SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type, b.require_3ds AS bin_require_3ds,
+        b.overdraft_limit_minor AS bin_overdraft_limit_minor, b.overdraft_fee_bps AS bin_overdraft_fee_bps,
+        b.overdraft_min_fee_minor AS bin_overdraft_min_fee_minor, b.overdraft_warning_bps AS bin_overdraft_warning_bps,
+        b.unfreeze_fee_minor AS bin_unfreeze_fee_minor,
         u.username AS owner_username, u.uid AS owner_uid
       FROM cards c
       JOIN bins b ON b.id = c.bin_id
@@ -489,26 +620,33 @@ function router({ db, config, notification, logger }) {
       transactions,
       orders,
       users,
-      isAdmin: req.user.role === 'admin'
+      isAdmin: req.user.role === 'admin',
+      isSuperAdmin: isSuperAdmin(req.user),
+      cardSpendLimitMinor: cardSpendLimit(db, card),
+      overdraft: resolvedOverdraft(card)
     });
   });
 
   route.post('/cards/:id/update', adminOnly, (req, res) => {
-    const card = db.prepare(`
-      SELECT c.*, b.name AS bin_name, b.prefix AS bin_prefix, b.brand, b.card_type,
-        u.role AS owner_role, u.uid AS owner_uid
-      FROM cards c JOIN bins b ON b.id = c.bin_id LEFT JOIN users u ON u.id = c.owner_user_id WHERE c.id = ?
-    `).get(req.params.id);
+    const card = cardById(db, config.appSecret, req.params.id, false);
     if (!card) return redirectMessage(res, '/admin/cards', 'error', '虚拟卡不存在。');
-    if (!canManageCardOwner(req.user, userById(db, card.owner_user_id))) return denyCardManagement(res);
+    if (!canManageCardOwner(req.user, userById(db, card.ownerUserId))) return denyCardManagement(res);
+    const rawCard = db.prepare('SELECT * FROM cards WHERE id = ?').get(card.id);
     const status = String(req.body.status || card.status);
     const declineReason = String(req.body.decline_reason || '').trim();
-    const balanceMinor = moneyInput(req.body.balance, { allowZero: true });
+    const balanceMinor = signedMoneyInput(req.body.balance);
     const expiresMonth = integer(req.body.expires_month, 1, 12);
     const expiresYear = normalizeYear(req.body.expires_year);
     const newPin = String(req.body.pin || '').trim();
     const newCvv = String(req.body.cvv || '').trim();
-    let ownerId = card.owner_user_id;
+    const spendLimitMode = req.body.spend_limit_mode === 'custom' ? 'custom' : 'inherit';
+    const spendLimitMinor = spendLimitMode === 'custom' ? moneyInput(req.body.spend_limit, { allowZero: true }) : null;
+    const overdraftMode = req.body.overdraft_mode === 'custom' ? 'custom' : 'inherit';
+    const overdraftLimitMinor = overdraftMode === 'custom' ? moneyInput(req.body.overdraft_limit ?? '5000', { allowZero: true }) : null;
+    const overdraftFeeBps = overdraftMode === 'custom' ? integer(req.body.overdraft_fee_bps ?? '500', 0, 10000) : null;
+    const overdraftMinFeeMinor = overdraftMode === 'custom' ? moneyInput(req.body.overdraft_min_fee ?? '0.01', { allowZero: true }) : null;
+    const overdraftWarningBps = overdraftMode === 'custom' ? integer(req.body.overdraft_warning_bps ?? '9500', 1, 10000) : null;
+    let ownerId = card.ownerUserId;
     if (req.body.owner_user_id) {
       const requestedOwnerId = integer(req.body.owner_user_id, 1, Number.MAX_SAFE_INTEGER);
       const requestedOwner = requestedOwnerId ? db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(requestedOwnerId) : null;
@@ -516,13 +654,23 @@ function router({ db, config, notification, logger }) {
       if (!canManageCardOwner(req.user, mapUser(requestedOwner))) return denyCardManagement(res);
       ownerId = requestedOwnerId;
     }
-    if (!allowedCardStatuses.has(status) || balanceMinor === null || expiresMonth === null || expiresYear === null || (newPin && (newPin.length < 4 || newPin.length > 64)) || (newCvv && !/^\d{3,4}$/.test(newCvv))) {
+    const planned = {
+      ...card, balanceMinor, overdraftMode, overdraftLimitMinor, overdraftFeeBps,
+      overdraftMinFeeMinor, overdraftWarningBps
+    };
+    const overdraft = resolvedOverdraft(planned);
+    const invalidNegativeBalance = balanceMinor !== null && balanceMinor < (overdraft.enabled ? -overdraft.limitMinor : 0);
+    if (!allowedCardStatuses.has(status) || balanceMinor === null || invalidNegativeBalance || expiresMonth === null || expiresYear === null || (newPin && (newPin.length < 4 || newPin.length > 64)) || (newCvv && !/^\d{3,4}$/.test(newCvv)) || (spendLimitMode === 'custom' && spendLimitMinor === null) || (overdraftMode === 'custom' && (overdraftLimitMinor === null || overdraftFeeBps === null || overdraftMinFeeMinor === null || overdraftWarningBps === null))) {
       return redirectMessage(res, `/admin/cards/${card.id}`, 'error', '卡片参数无效。');
     }
+    const freezeSource = status === 'frozen' ? (card.status === 'frozen' ? card.freezeSource : 'admin') : 'none';
+    const freezeCode = status === 'frozen' ? (card.status === 'frozen' ? card.freezeCode : 'ADMIN') : null;
     db.transaction(() => {
       db.prepare(`
         UPDATE cards SET owner_user_id = ?, status = ?, decline_reason = ?, balance_minor = ?, expires_month = ?, expires_year = ?,
-          pin_enc = ?, cvv_enc = ?, updated_at = ? WHERE id = ?
+          pin_enc = ?, cvv_enc = ?, freeze_source = ?, freeze_code = ?, consecutive_failures = CASE WHEN ? = 'active' THEN 0 ELSE consecutive_failures END,
+          spend_limit_mode = ?, spend_limit_minor = ?, overdraft_mode = ?, overdraft_limit_minor = ?, overdraft_fee_bps = ?,
+          overdraft_min_fee_minor = ?, overdraft_warning_bps = ?, updated_at = ? WHERE id = ?
       `).run(
         ownerId,
         status,
@@ -530,54 +678,80 @@ function router({ db, config, notification, logger }) {
         balanceMinor,
         expiresMonth,
         expiresYear,
-        newPin ? encrypt(newPin, config.appSecret) : card.pin_enc,
-        newCvv ? encrypt(newCvv, config.appSecret) : card.cvv_enc,
+        newPin ? encrypt(newPin, config.appSecret) : rawCard.pin_enc,
+        newCvv ? encrypt(newCvv, config.appSecret) : rawCard.cvv_enc,
+        freezeSource,
+        freezeCode,
+        status,
+        spendLimitMode,
+        spendLimitMinor,
+        overdraftMode,
+        overdraftLimitMinor,
+        overdraftFeeBps,
+        overdraftMinFeeMinor,
+        overdraftWarningBps,
         Date.now(),
         card.id
       );
-      if (balanceMinor !== card.balance_minor) {
+      if (balanceMinor !== card.balanceMinor) {
         db.prepare(`
           INSERT INTO card_transactions (card_id, order_id, type, amount_minor, balance_after_minor, note, created_at)
           VALUES (?, NULL, 'ADJUSTMENT', ?, ?, 'Admin balance adjustment', ?)
-        `).run(card.id, Math.abs(balanceMinor - card.balance_minor), balanceMinor, Date.now());
+        `).run(card.id, balanceMinor - card.balanceMinor, balanceMinor, Date.now());
       }
     })();
     redirectMessage(res, `/admin/cards/${card.id}`, 'ok', '卡片信息已更新。');
   });
 
   route.post('/cards/:id/decline', adminOnly, (req, res) => {
-    const card = db.prepare('SELECT * FROM cards WHERE id = ?').get(req.params.id);
+    const card = cardById(db, config.appSecret, req.params.id, false);
     if (!card) return redirectMessage(res, '/admin/cards', 'error', '虚拟卡不存在。');
-    if (!canManageCardOwner(req.user, userById(db, card.owner_user_id))) return denyCardManagement(res);
+    if (!canManageCardOwner(req.user, userById(db, card.ownerUserId))) return denyCardManagement(res);
     const nextStatus = card.status === 'declined' ? 'active' : 'declined';
     const reason = String(req.body.reason || '模拟拒付').trim() || '模拟拒付';
-    db.prepare('UPDATE cards SET status = ?, decline_reason = ?, updated_at = ? WHERE id = ?')
-      .run(nextStatus, nextStatus === 'declined' ? reason : null, Date.now(), card.id);
+    db.prepare("UPDATE cards SET status = ?, decline_reason = ?, freeze_source = 'none', freeze_code = NULL, consecutive_failures = CASE WHEN ? = 'active' THEN 0 ELSE consecutive_failures END, updated_at = ? WHERE id = ?")
+      .run(nextStatus, nextStatus === 'declined' ? reason : null, nextStatus, Date.now(), card.id);
     const message = nextStatus === 'declined' ? '已开启模拟拒付。' : '已恢复为可支付状态。';
     redirectMessage(res, `/admin/cards/${card.id}`, 'ok', message);
+  });
+
+  route.post('/cards/:id/unfreeze', adminOnly, (req, res) => {
+    const card = cardById(db, config.appSecret, req.params.id, false);
+    if (!card) return redirectMessage(res, '/admin/cards', 'error', '虚拟卡不存在。');
+    if (!canManageCardOwner(req.user, userById(db, card.ownerUserId))) return denyCardManagement(res);
+    try {
+      unfreezeCard({ db, card, actor: req.user, selfService: false });
+      return redirectMessage(res, `/admin/cards/${card.id}`, 'ok', '虚拟卡已解冻，管理员操作不收取解冻费。');
+    } catch (error) {
+      return redirectMessage(res, `/admin/cards/${card.id}`, 'error', error.message);
+    }
   });
 
   route.post('/cards/:id/consume', adminOnly, (req, res) => {
     const amountMinor = moneyInput(req.body.amount, { allowZero: false });
     const note = String(req.body.note || '管理员手工消费').trim().slice(0, 120) || '管理员手工消费';
     if (amountMinor === null) return redirectMessage(res, `/admin/cards/${req.params.id}`, 'error', '消费金额必须大于 0。');
-    const existingCard = db.prepare('SELECT * FROM cards WHERE id = ?').get(req.params.id);
+    const existingCard = cardById(db, config.appSecret, req.params.id, false);
     if (!existingCard) return redirectMessage(res, '/admin/cards', 'error', '虚拟卡不存在。');
-    if (!canManageCardOwner(req.user, userById(db, existingCard.owner_user_id))) return denyCardManagement(res);
+    if (!canManageCardOwner(req.user, userById(db, existingCard.ownerUserId))) return denyCardManagement(res);
     try {
+      let debit;
+      let failure = null;
       db.transaction(() => {
-        const card = db.prepare('SELECT * FROM cards WHERE id = ?').get(req.params.id);
+        const card = cardById(db, config.appSecret, req.params.id, false);
         if (!card) throw new EpayError('虚拟卡不存在。', 'CARD_NOT_FOUND', 404);
-        if (card.balance_minor < amountMinor) throw new EpayError('卡片余额不足。', 'INSUFFICIENT_FUNDS', 409);
-        const nextBalance = card.balance_minor - amountMinor;
-        const now = Date.now();
-        db.prepare('UPDATE cards SET balance_minor = ?, last_used_at = ?, updated_at = ? WHERE id = ?')
-          .run(nextBalance, now, now, card.id);
-        db.prepare(`
-          INSERT INTO card_transactions (card_id, order_id, type, amount_minor, balance_after_minor, note, created_at)
-          VALUES (?, NULL, 'DEBIT', ?, ?, ?, ?)
-        `).run(card.id, amountMinor, nextBalance, note, now);
+        const limit = cardSpendLimit(db, card);
+        if (limit !== null && amountMinor > limit) {
+          throw new EpayError(`单笔消费超过该卡限额 CNY ${(limit / 100).toFixed(2)}。`, 'SPEND_LIMIT_EXCEEDED', 409);
+        }
+        debit = applyCardDebit(db, card, amountMinor, { note });
+        if (!debit.ok) {
+          failure = recordInsufficientFailure(db, card, debit.code);
+          return;
+        }
+        maybeFreezeForOverdraftWarning(db, card, debit.nextBalanceMinor, debit.config);
       })();
+      if (failure) throw new EpayError(`${debit.message}${failure.frozen ? '；连续 5 次失败，卡片已自动冻结' : ''}`, 'INSUFFICIENT_FUNDS', 409);
       redirectMessage(res, `/admin/cards/${req.params.id}`, 'ok', '手工消费已记录。');
     } catch (error) {
       if (error instanceof EpayError) return redirectMessage(res, `/admin/cards/${req.params.id}`, 'error', error.message);
@@ -586,28 +760,28 @@ function router({ db, config, notification, logger }) {
   });
 
   route.post('/cards/:id/delete', adminOnly, (req, res) => {
-    const ownedCard = db.prepare('SELECT * FROM cards WHERE id = ?').get(req.params.id);
+    const ownedCard = cardById(db, config.appSecret, req.params.id, false);
     if (!ownedCard) return redirectMessage(res, '/admin/cards', 'error', '虚拟卡不存在。');
-    if (!canManageCardOwner(req.user, userById(db, ownedCard.owner_user_id))) return denyCardManagement(res);
+    if (!canManageCardOwner(req.user, userById(db, ownedCard.ownerUserId))) return denyCardManagement(res);
     const result = db.transaction(() => {
-      const card = db.prepare('SELECT id, balance_minor FROM cards WHERE id = ?').get(req.params.id);
+      const card = db.prepare('SELECT id, balance_minor, status FROM cards WHERE id = ?').get(req.params.id);
       if (!card) return { status: 'missing' };
-      if (card.balance_minor !== 0) return { status: 'nonzero', cardId: card.id, balanceMinor: card.balance_minor };
-      const pendingOrderCount = db.prepare("SELECT COUNT(*) AS count FROM orders WHERE card_id = ? AND (status = 'PENDING' OR (status = 'PAID' AND settled_at IS NULL))").get(card.id).count;
-      if (pendingOrderCount > 0) return { status: 'in-use', cardId: card.id, pendingOrderCount };
+      const unsettledPaid = db.prepare("SELECT COUNT(*) AS count FROM orders WHERE card_id = ? AND status = 'PAID' AND settled_at IS NULL").get(card.id).count;
+      if (unsettledPaid > 0) return { status: 'in-use', cardId: card.id, pendingOrderCount: unsettledPaid };
+      const pendingOrderCount = db.prepare("SELECT COUNT(*) AS count FROM orders WHERE card_id = ? AND status = 'PENDING'").get(card.id).count;
+      const pendingOrderIds = db.prepare("SELECT id FROM orders WHERE card_id = ? AND status = 'PENDING'").all(card.id).map((order) => order.id);
+      db.prepare("UPDATE orders SET status = 'FAILED', card_id = NULL, closed_at = ?, callback_event = 'CARD_DELETED_BY_ADMIN' WHERE card_id = ? AND status = 'PENDING'").run(Date.now(), card.id);
       db.prepare('UPDATE orders SET card_id = NULL WHERE card_id = ?').run(card.id);
       db.prepare('DELETE FROM card_transactions WHERE card_id = ?').run(card.id);
       db.prepare('DELETE FROM cards WHERE id = ?').run(card.id);
-      return { status: 'deleted', cardId: card.id };
+      return { status: 'deleted', cardId: card.id, pendingOrderCount, pendingOrderIds };
     })();
     if (result.status === 'missing') return redirectMessage(res, '/admin/cards', 'error', '虚拟卡不存在。');
-    if (result.status === 'nonzero') {
-      return redirectMessage(res, `/admin/cards/${result.cardId}`, 'error', `卡片余额必须为 0 才能删除，当前余额为 ${formatMinor(result.balanceMinor)}。`);
-    }
     if (result.status === 'in-use') {
-      return redirectMessage(res, `/admin/cards/${result.cardId}`, 'error', `该卡仍有 ${result.pendingOrderCount} 个进行中或待结算订单，不能删除。`);
+      return redirectMessage(res, `/admin/cards/${result.cardId}`, 'error', `该卡仍有 ${result.pendingOrderCount} 个待结算订单，必须先处理退款窗口后才能删除。`);
     }
-    return redirectMessage(res, '/admin/cards', 'ok', '虚拟卡已删除。');
+    for (const orderId of result.pendingOrderIds) notification.enqueue(orderId);
+    return redirectMessage(res, '/admin/cards', 'ok', result.pendingOrderCount ? '虚拟卡已删除，未完成支付订单已置为失败。' : '虚拟卡已强制删除。');
   });
 
   route.get('/orders', (req, res) => {
@@ -678,20 +852,23 @@ function router({ db, config, notification, logger }) {
 
   route.post('/orders/:id/resend', adminOnly, (req, res) => {
     const id = integer(req.params.id, 1, Number.MAX_SAFE_INTEGER);
-    if (!id) return redirectMessage(res, '/admin/orders', 'error', '订单不存在。');
+    const scope = orderScope(req);
+    const allowed = id ? db.prepare(`SELECT o.id FROM orders o WHERE o.id = ? ${scope.condition ? `AND ${scope.condition}` : ''}`).get(id, ...scope.params) : null;
+    if (!allowed) return redirectMessage(res, '/admin/orders', 'error', '订单不存在或无权操作。');
     notification.enqueue(id, { force: true });
     redirectMessage(res, `/admin/orders/${id}`, 'ok', '已提交异步回调，结果会在回调记录中显示。');
   });
 
   route.post('/orders/:id/chargeback', adminOnly, (req, res) => {
     const id = integer(req.params.id, 1, Number.MAX_SAFE_INTEGER);
-    const row = id ? db.prepare('SELECT * FROM orders WHERE id = ?').get(id) : null;
+    const scope = orderScope(req);
+    const row = id ? db.prepare(`SELECT o.* FROM orders o WHERE o.id = ? ${scope.condition ? `AND ${scope.condition}` : ''}`).get(id, ...scope.params) : null;
     if (!row) return res.status(404).render('error', { title: '订单不存在', message: '未找到该订单。', statusCode: 404 });
     const order = mapOrder(row);
     if (!canRefundOrder(req.user, order)) {
       return res.status(403).render('error', {
         title: '没有退款权限',
-        message: '普通管理员只能拒付/退款信用卡支付订单。',
+        message: '管理员只能拒付/退款信用卡支付订单。',
         statusCode: 403
       });
     }
@@ -832,6 +1009,15 @@ function router({ db, config, notification, logger }) {
     const minDepositFee = moneyInput(req.body.card_min_deposit_fee, { allowZero: true });
     const minWithdraw = moneyInput(req.body.card_min_withdraw, { allowZero: true });
     const minWithdrawFee = moneyInput(req.body.card_min_withdraw_fee, { allowZero: true });
+    const unfreezeFee = req.body.card_unfreeze_fee === undefined
+      ? Number.parseInt(getSetting(db, 'card_unfreeze_fee_minor', '10000'), 10)
+      : moneyInput(req.body.card_unfreeze_fee, { allowZero: true });
+    const transferBps = req.body.internal_transfer_fee_bps === undefined
+      ? Number.parseInt(getSetting(db, 'internal_transfer_fee_bps', '0'), 10)
+      : integer(req.body.internal_transfer_fee_bps, 0, 10000);
+    const transferMinFee = req.body.internal_transfer_min_fee === undefined
+      ? Number.parseInt(getSetting(db, 'internal_transfer_min_fee_minor', '0'), 10)
+      : moneyInput(req.body.internal_transfer_min_fee, { allowZero: true });
     const guaranteeSeconds = integer(req.body.merchant_guarantee_seconds, 60, 86400);
     const emailTtl = integer(req.body.email_code_ttl_seconds, 60, 86400);
     const emailResend = integer(req.body.email_code_resend_seconds, 0, 86400);
@@ -851,7 +1037,7 @@ function router({ db, config, notification, logger }) {
       if (!pattern || pattern.length > 500) return redirectMessage(res, '/admin/settings', 'error', `${label}正则不能为空且不能超过 500 个字符。`);
       try { new RegExp(pattern); } catch { return redirectMessage(res, '/admin/settings', 'error', `${label}正则表达式无效。`); }
     }
-    if (timeout === null || !/^[A-Z]{3}$/.test(currency) || !supportedTypes || smtpPort === null || inviteLimit === null || inviteRandomLength === null || inviteCustomFee === null || inviteSlotPrice === null || depositBps === null || withdrawBps === null || minDeposit === null || minDepositFee === null || minWithdraw === null || minWithdrawFee === null || guaranteeSeconds === null || emailTtl === null || emailResend === null) {
+    if (timeout === null || !/^[A-Z]{3}$/.test(currency) || !supportedTypes || smtpPort === null || inviteLimit === null || inviteRandomLength === null || inviteCustomFee === null || inviteSlotPrice === null || depositBps === null || withdrawBps === null || minDeposit === null || minDepositFee === null || minWithdraw === null || minWithdrawFee === null || unfreezeFee === null || transferBps === null || transferMinFee === null || guaranteeSeconds === null || emailTtl === null || emailResend === null) {
       return redirectMessage(res, '/admin/settings', 'error', '设置参数无效，请检查金额、比例和数值范围。');
     }
     const currentCurrency = getSetting(db, 'default_currency', 'CNY');
@@ -899,6 +1085,9 @@ function router({ db, config, notification, logger }) {
       setSetting(db, 'card_withdraw_fee_bps', withdrawBps);
       setSetting(db, 'card_min_withdraw_minor', minWithdraw);
       setSetting(db, 'card_min_withdraw_fee_minor', minWithdrawFee);
+      setSetting(db, 'card_unfreeze_fee_minor', unfreezeFee);
+      setSetting(db, 'internal_transfer_fee_bps', transferBps);
+      setSetting(db, 'internal_transfer_min_fee_minor', transferMinFee);
       setSetting(db, 'merchant_guarantee_seconds', guaranteeSeconds);
     })();
     res.app.locals.siteName = siteName;
