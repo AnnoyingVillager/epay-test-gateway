@@ -9,6 +9,7 @@
     <h1>账户登录</h1>
     <p class="login-subtitle">管理员管理网关，普通用户创建自己的虚拟卡并完成支付。</p>
     <% if (error) { %><div class="alert alert-danger"><%= error %></div><% } %>
+    <% if (typeof message !== 'undefined' && message) { %><div class="alert alert-info"><%= message %></div><% } %>
     <form method="post" action="/admin/login" class="stack-form">
       <input type="hidden" name="next" value="<%= next %>">
       <label class="field">
@@ -21,6 +22,7 @@
       </label>
       <button class="button button-primary button-block" type="submit">登录</button>
     </form>
+    <p class="login-hint"><a class="text-link" href="/admin/forgot-password">忘记密码</a></p>
     <p class="login-hint">初始管理员账号由 <code>ADMIN_USERNAME</code> 与 <code>ADMIN_PASSWORD</code> 首次启动时创建。账号权限、分组和邀请规则由管理员配置。</p>
     <% if (registrationEnabled) { %><p class="login-hint">还没有账号？<a class="text-link" href="/register">立即注册</a></p><% } %>
   </section>

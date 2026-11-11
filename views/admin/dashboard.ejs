@@ -30,7 +30,7 @@
   </div>
   <% if (!recentOrders.length) { %>
     <div class="empty-state"><strong>还没有订单</strong><p>创建虚拟卡后，通过 <code>/submit.php</code> 或 <code>/api.php</code> 发起测试支付。</p></div>
-  <% } else { %>
+  <% } else if (!isAdmin) { %>
   <div class="table-wrap">
     <table>
       <thead><tr><th>网关流水</th><th>商户订单号</th><th>金额</th><th>状态</th><th>创建时间</th><th></th></tr></thead>
@@ -53,9 +53,13 @@
 
 <section class="quick-grid">
   <a class="quick-card" href="/admin/cards/new"><span>+</span><div><strong>创建虚拟卡</strong><small>生成卡号、余额和 3DS 密码</small></div></a>
-  <% if (isAdmin) { %>
+  <% if (isSuperAdmin) { %>
     <a class="quick-card" href="/admin/bins"><span>#</span><div><strong>管理卡 BIN</strong><small>配置品牌、前缀和卡号长度</small></div></a>
-    <a class="quick-card" href="/admin/users"><span>@</span><div><strong>用户管理</strong><small>创建管理员或普通用户账号</small></div></a>
+  <% } %>
+  <% if (isAdmin) { %>
+    <a class="quick-card" href="/admin/users"><span>@</span><div><strong>用户管理</strong><small><%= isSuperAdmin ? '创建普通管理员或普通用户账号' : '创建普通用户并处理常规风控' %></small></div></a>
+  <% } %>
+  <% if (isSuperAdmin) { %>
     <a class="quick-card" href="/admin/merchants"><span>↗</span><div><strong>商户密钥</strong><small>查看商户 PID 与 MD5 密钥</small></div></a>
   <% } else { %>
     <a class="quick-card" href="/admin/orders"><span>↗</span><div><strong>我的订单</strong><small>查看已绑定卡片的支付记录</small></div></a>

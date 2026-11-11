@@ -5,7 +5,7 @@
     <div class="panel-head"><div><p class="eyebrow">USER PROFILE</p><h2><%= user.username %></h2></div><span class="pill <%= user.isActive ? 'pill-success' : 'pill-danger' %>"><%= user.isActive ? '启用' : '禁用' %></span></div>
     <dl class="meta-list">
       <div><dt>UID</dt><dd><code><%= user.uid %></code></dd></div>
-      <div><dt>角色</dt><dd><%= user.role === 'admin' ? '管理员' : '普通用户' %></dd></div>
+      <div><dt>角色</dt><dd><%= roleLabel(user) %></dd></div>
       <div><dt>邮箱</dt><dd><%= user.email || '-' %></dd></div>
       <div><dt>分组</dt><dd><%= user.groupName || 'Default' %></dd></div>
       <div><dt>账户余额</dt><dd><strong>CNY <%= formatMinor(user.accountBalanceMinor) %></strong></dd></div>
@@ -20,6 +20,10 @@
   </section>
   <section class="panel">
     <div class="panel-head"><div><p class="eyebrow">ACCOUNT CONTROL</p><h2>账户与风控</h2></div></div>
+    <% if (canManage && user.uid === 0) { %><div class="alert alert-warning">UID 0 是唯一超级管理员，系统禁止停用、阻断、删除或降级；密码仍可在此重置或前往账户页面修改。</div><% } %>
+    <% if (!canManage) { %>
+      <div class="alert alert-warning"><%= user.uid === 0 ? 'UID 0 超级管理员受系统保护，不能在用户管理中停用、降级或删除；如需修改密码，请使用账户页面。' : '普通管理员不能修改其他管理员账号。' %></div>
+    <% } else { %>
     <form method="post" action="/admin/users/<%= user.uid %>/update" class="stack-form">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="form-row">
@@ -49,10 +53,24 @@
       <p class="form-hint">当前有效权限：<strong><%= invitePermission.enabled ? '可邀请' : '不可邀请' %></strong>。继承模式同时受全局策略和单独开关控制；单独开关模式不受全局策略影响。</p>
       <div class="form-actions"><button class="button button-primary" type="submit">保存用户配置</button></div>
     </form>
+    <hr class="divider">
+    <div class="panel-head compact-head"><div><p class="eyebrow">PASSWORD CONTROL</p><h2>设定新密码</h2></div></div>
+    <form method="post" action="/admin/users/<%= user.uid %>/password" class="stack-form" data-password-reset-form data-confirm="<%= user.id === currentUser.id ? '修改管理员自己的密码会立即结束当前会话，请确认密码已复制或妥善保存。继续？' : `确认重置用户 ${user.username} 的密码？该用户的所有旧登录会话将立即失效。` %>">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="form-row">
+        <label class="field"><span>新密码</span><input id="new-password-<%= user.uid %>" type="password" name="new_password" autocomplete="new-password" maxlength="128" required></label>
+        <label class="field"><span>&nbsp;</span><button class="button button-ghost button-block" type="button" data-generate-password data-password-target="#new-password-<%= user.uid %>">生成随机密码并复制</button></label>
+      </div>
+      <p class="form-hint" data-generate-password-status>随机密码固定为 12 位，并同时包含大写字母、小写字母和数字。也可以手动输入符合当前密码规则的新密码。</p>
+      <div class="form-actions"><button class="button button-primary" type="submit">确认设定新密码</button></div>
+    </form>
+    <% } %>
   </section>
 </div>
 
+<% if (canManage || canSuperRisk || canDeleteUser) { %>
 <div class="detail-grid">
+  <% if (canManage) { %>
   <section class="panel">
     <div class="panel-head"><div><p class="eyebrow">ACCOUNT BALANCE</p><h2>调整账户余额</h2></div></div>
     <form method="post" action="/admin/users/<%= user.uid %>/balance" class="form-row" data-money-confirm data-confirm-title="确认调整账户余额" data-confirm-message="该操作会立即变动用户账户余额，请核对操作方向和金额。" data-confirm-action="确认调整" data-confirm-currency="CNY" data-confirm-amount-field="amount" data-confirm-target-field="operation" data-confirm-target-label="操作" data-confirm-note="余额调整将写入账户流水，提交后无法撤回。">
@@ -62,15 +80,19 @@
       <div class="form-actions"><button class="button button-primary" type="submit">调整余额</button></div>
     </form>
   </section>
+  <% } %>
+  <% if (canSuperRisk || canDeleteUser) { %>
   <section class="panel">
     <div class="panel-head"><div><p class="eyebrow">EXTREME RISK</p><h2>超级风控</h2></div></div>
     <div class="alert alert-warning">会清空账户余额和全部卡余额、删除名下所有卡、终止进行中订单并禁用账号。</div>
-    <form method="post" action="/admin/users/<%= user.uid %>/super-risk" data-confirm="确认执行超级风控？该操作不可撤销。">
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <label class="field"><span>风控理由</span><input name="reason" value="极端风险控制" maxlength="200"></label>
-      <button class="button button-danger" type="submit">一键超级风控</button>
-    </form>
-    <% if (user.superRiskAt && !user.isActive && user.role !== 'admin') { %>
+    <% if (canSuperRisk) { %>
+      <form method="post" action="/admin/users/<%= user.uid %>/super-risk" data-confirm="确认执行超级风控？该操作不可撤销。">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <label class="field"><span>风控理由</span><input name="reason" value="极端风险控制" maxlength="200"></label>
+        <button class="button button-danger" type="submit">一键超级风控</button>
+      </form>
+    <% } %>
+    <% if (canDeleteUser) { %>
       <hr class="divider">
       <form method="post" action="/admin/users/<%= user.uid %>/delete" data-confirm="确认删除账号？删除后不可再次启用。">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -78,13 +100,15 @@
       </form>
     <% } %>
   </section>
+  <% } %>
 </div>
+<% } %>
 
 <section class="panel">
   <div class="panel-head"><div><p class="eyebrow">CARDS</p><h2>名下虚拟卡</h2></div><span class="count-badge"><%= cards.length %></span></div>
   <% if (!cards.length) { %><div class="empty-state compact">该用户暂无虚拟卡。</div><% } else { %>
     <div class="table-wrap"><table><thead><tr><th>卡片</th><th>BIN</th><th>类型</th><th>余额</th><th>状态</th><th></th></tr></thead><tbody>
-      <% cards.forEach((card) => { %><tr><td><code><%= formatCardShort(card) %></code></td><td><%= card.binName %></td><td><%= card.cardType === 'credit' ? '信用卡' : '借记卡' %></td><td>CNY <%= formatMinor(card.balanceMinor) %></td><td><%= statusLabel(card.status) %></td><td class="align-right"><a class="button button-ghost button-small" href="/admin/cards/<%= card.id %>">管理</a></td></tr><% }) %>
+      <% cards.forEach((card) => { %><tr><td><code><%= formatCardShort(card) %></code></td><td><%= card.binName %></td><td><%= card.cardType === 'credit' ? '信用卡' : '借记卡' %></td><td>CNY <%= formatMinor(card.balanceMinor) %></td><td><%= statusLabel(card.status) %></td><td class="align-right"><% if (canManage) { %><a class="button button-ghost button-small" href="/admin/cards/<%= card.id %>">管理</a><% } else { %>-<% } %></td></tr><% }) %>
     </tbody></table></div>
   <% } %>
 </section>

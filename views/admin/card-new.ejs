@@ -6,15 +6,15 @@
   <% if (!bins.length) { %>
     <div class="empty-state">
       <strong>暂无可用的卡 BIN</strong>
-      <p><%= isAdmin ? '虚拟卡号需要由 BIN 前缀生成，请先创建卡 BIN。' : '请联系管理员创建并启用卡 BIN。' %></p>
-      <% if (isAdmin) { %><a class="button button-primary" href="/admin/bins">前往 BIN 管理</a><% } %>
+      <p><%= isSuperAdminUser ? '虚拟卡号需要由 BIN 前缀生成，请先创建卡 BIN。' : '当前没有可用卡 BIN，请联系超级管理员配置。' %></p>
+      <% if (isSuperAdminUser) { %><a class="button button-primary" href="/admin/bins">前往 BIN 管理</a><% } %>
     </div>
   <% } else { %>
   <form method="post" action="/admin/cards" class="form-grid card-create-form">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <label class="field field-span-2"><span>选择卡 BIN</span><select name="bin_id" required><option value="">请选择</option><% bins.forEach((bin) => { %><option value="<%= bin.id %>" <%= String(form.bin_id) === String(bin.id) ? 'selected' : '' %>><%= bin.name %> · <%= bin.prefix %> · <%= bin.number_length %> 位 · 3DS <%= bin.require_3ds ? '开启' : '关闭' %></option><% }) %></select></label>
     <% if (isAdmin) { %>
-      <label class="field field-span-2"><span>所属用户</span><select name="owner_user_id"><% users.forEach((user) => { %><option value="<%= user.id %>" <%= String(form.owner_user_id || currentUser.id) === String(user.id) ? 'selected' : '' %>><%= user.username %> · <%= user.role === 'admin' ? '管理员' : '普通用户' %></option><% }) %></select></label>
+      <label class="field field-span-2"><span>所属用户</span><select name="owner_user_id"><% users.forEach((user) => { %><option value="<%= user.id %>" <%= String(form.owner_user_id || currentUser.id) === String(user.id) ? 'selected' : '' %>><%= user.username %> · <%= roleLabel(user) %></option><% }) %></select></label>
     <% } %>
     <% if (isAdmin) { %>
       <label class="field"><span>初始余额</span><input type="number" name="balance" min="0" step="0.01" value="<%= form.balance || '1000.00' %>" required></label>

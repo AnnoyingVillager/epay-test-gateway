@@ -6,6 +6,7 @@ const {
   verifyPassword
 } = require('./crypto');
 const { mapUser, userById } = require('./db');
+const { isSuperAdmin, roleLabel } = require('./permissions');
 
 const COOKIE_NAME = 'epay_session';
 
@@ -15,6 +16,8 @@ function userSessionFromRequest(req, db, config) {
   if (!payload) return null;
   const user = userById(db, payload.uid);
   if (!user || !user.isActive || user.accountRisk === 'blocked' || user.username !== payload.u || user.role !== payload.r) return null;
+  if (Number(payload.pv || 0) !== Number(user.passwordVersion || 0)) return null;
+  if (payload.sa !== undefined && Boolean(payload.sa) !== isSuperAdmin(user)) return null;
   return { payload, user, token: cookies[COOKIE_NAME] };
 }
 
@@ -46,6 +49,8 @@ function requireUser(req, res, next) {
   req.sessionCsrf = session.payload.csrf;
   res.locals.currentUser = session.user;
   res.locals.csrfToken = session.payload.csrf;
+  res.locals.isSuperAdminUser = isSuperAdmin(session.user);
+  res.locals.currentRoleLabel = roleLabel(session.user);
   next();
 }
 

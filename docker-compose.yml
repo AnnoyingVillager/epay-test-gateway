@@ -21,6 +21,7 @@ services:
       BASE_URL: ""
 
       # 修改为强管理员密码。
+      # 忘记密码后可在部署目录执行：docker compose exec epay node scripts/reset-admin-password.js
       ADMIN_USERNAME: "admin"
       ADMIN_PASSWORD: "change-me-now"
       ADMIN_SESSION_HOURS: "12"

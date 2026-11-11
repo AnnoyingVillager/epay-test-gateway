@@ -13,6 +13,7 @@ const { Mailer } = require('./mailer');
 const { formatMinor } = require('./epay');
 const { formatCardShort, formatCardLabel } = require('./card-format');
 const { version: appVersion } = require('../package.json');
+const { isAdmin, isSuperAdmin, roleLabel } = require('./permissions');
 
 function createApp(options) {
   const config = options.config;
@@ -47,6 +48,9 @@ function createApp(options) {
   })[status] || status;
   app.locals.formatCardShort = formatCardShort;
   app.locals.formatCardLabel = formatCardLabel;
+  app.locals.isAdmin = isAdmin;
+  app.locals.isSuperAdmin = isSuperAdmin;
+  app.locals.roleLabel = roleLabel;
 
   app.use(helmet({
     contentSecurityPolicy: {
@@ -77,6 +81,8 @@ function createApp(options) {
     res.locals.hasUserSession = Boolean(session);
     res.locals.hasAdminSession = Boolean(session);
     res.locals.csrfToken = session?.payload?.csrf || '';
+    res.locals.isSuperAdminUser = isSuperAdmin(session?.user);
+    res.locals.currentRoleLabel = session?.user ? roleLabel(session.user) : '';
     res.locals.currentPath = req.path;
     res.locals.query = req.query;
     next();
@@ -102,6 +108,8 @@ function createApp(options) {
   app.use('/pay/:tradeNo/account', payLimiter);
   app.use('/pay/:tradeNo/login', loginLimiter);
   app.use('/admin/login', loginLimiter);
+  app.use('/admin/forgot-password/send-code', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false }));
+  app.use('/admin/forgot-password', rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: 'draft-8', legacyHeaders: false }));
   app.use('/register/send-code', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false }));
   app.use('/register', rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: 'draft-8', legacyHeaders: false }));
   app.use('/admin', (req, res, next) => {

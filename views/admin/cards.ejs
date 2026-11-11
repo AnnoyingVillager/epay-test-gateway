@@ -10,7 +10,7 @@
     <a class="button button-primary" href="/admin/cards/new">+ 创建虚拟卡</a>
   </div>
   <% if (!cards.length) { %>
-    <div class="empty-state"><strong>没有找到虚拟卡</strong><p><%= isAdmin ? '创建 BIN 后即可生成测试卡。' : '请联系管理员创建可用的卡 BIN，然后创建虚拟卡。' %></p><a class="button button-primary button-small" href="/admin/cards/new">创建虚拟卡</a></div>
+    <div class="empty-state"><strong>没有找到虚拟卡</strong><p><%= isSuperAdminUser ? '创建 BIN 后即可生成测试卡。' : '请联系超级管理员配置可用的卡 BIN，然后创建虚拟卡。' %></p><a class="button button-primary button-small" href="/admin/cards/new">创建虚拟卡</a></div>
   <% } else { %>
   <div class="table-wrap">
     <table>

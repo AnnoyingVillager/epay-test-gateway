@@ -28,7 +28,7 @@
     <div class="button-row">
       <% if (isAdmin) { %>
         <form method="post" action="/admin/orders/<%= order.id %>/resend"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-ghost" type="submit">重新发送回调</button></form>
-        <% if (order.refundable) { %><form method="post" action="/admin/orders/<%= order.id %>/chargeback" data-money-confirm data-confirm-title="确认发起全额退款" data-confirm-message="该订单的支付金额将原路返回账户余额或虚拟卡余额。" data-confirm-action="确认退款" data-confirm-tone="danger" data-confirm-currency="CNY" data-confirm-cost-minor="<%= order.moneyMinor %>" data-confirm-amount-label="退款金额" data-confirm-note="退款成功后将生成退款记录并触发通知，无法撤回。"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-danger" type="submit">发起退款</button></form><% } %>
+        <% if (order.refundable && canRefund) { %><form method="post" action="/admin/orders/<%= order.id %>/chargeback" data-money-confirm data-confirm-title="确认发起全额退款" data-confirm-message="该订单的支付金额将原路返回账户余额或虚拟卡余额。" data-confirm-action="确认退款" data-confirm-tone="danger" data-confirm-currency="CNY" data-confirm-cost-minor="<%= order.moneyMinor %>" data-confirm-amount-label="退款金额" data-confirm-note="退款成功后将生成退款记录并触发通知，无法撤回。"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button button-danger" type="submit">发起退款</button></form><% } %>
       <% } %>
       <a class="button button-ghost" href="/pay/<%= encodeURIComponent(order.tradeNo) %>" target="_blank" rel="noopener">查看支付页</a>
     </div>
@@ -46,7 +46,7 @@
       <div><dt>回调事件</dt><dd><code><%= order.callbackEvent || '-' %></code></dd></div>
       <div><dt>商户 PID</dt><dd><code><%= merchant.pid %></code></dd></div>
       <div><dt>签名方式</dt><dd>MD5</dd></div>
-      <% if (isAdmin) { %><div><dt>商户密钥</dt><dd><code class="break-all"><%= merchant.key %></code><button type="button" class="copy-button" data-copy="<%= merchant.key %>">复制</button></dd></div><% } %>
+      <% if (isSuperAdmin) { %><div><dt>商户密钥</dt><dd><code class="break-all"><%= merchant.key %></code><button type="button" class="copy-button" data-copy="<%= merchant.key %>">复制</button></dd></div><% } %>
     </dl>
     <div class="alert alert-info">商户的 notify 接口返回纯文本 <code>success</code> 时，回调才会被标记为已送达。</div>
   </aside>

@@ -220,6 +220,8 @@ small { color: var(--ink-faint); }
 .sticky-panel { position: sticky; top: 92px; align-self: start; }
 .split-layout { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(320px, .75fr); gap: 20px; align-items: start; }
 .detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, .8fr); gap: 20px; align-items: start; }
+.panel-column { display: grid; gap: 20px; min-width: 0; }
+.panel-column > .panel { margin-bottom: 0; }
 .settings-grid { grid-template-columns: minmax(0, 1.1fr) minmax(380px, .8fr); }
 .order-detail-grid { grid-template-columns: minmax(0, 1.25fr) minmax(360px, .65fr); }
 

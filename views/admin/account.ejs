@@ -1,17 +1,30 @@
 <%- include('../partials/head', { bodyClass: 'admin-page' }) %>
 <%- include('../partials/admin-start') %>
 <div class="detail-grid">
-  <section class="panel">
-    <div class="panel-head"><div><p class="eyebrow">ACCOUNT BALANCE</p><h2>我的账户</h2></div></div>
-    <div class="amount">CNY <%= formatMinor(user.accountBalanceMinor) %></div>
-    <dl class="meta-list">
-      <div><dt>UID</dt><dd><code><%= user.uid %></code></dd></div>
-      <div><dt>分组</dt><dd><%= user.groupName || 'Default' %></dd></div>
-      <div><dt>生效消费限额</dt><dd><%= effectiveLimitMinor === null ? '不限制' : 'CNY ' + formatMinor(effectiveLimitMinor) %></dd></div>
-      <div><dt>累计已消费</dt><dd>CNY <%= formatMinor(spentMinor) %></dd></div>
-      <div><dt>卡面额度</dt><dd><%= user.cardBalanceLimitMinor === null ? '不限制' : `CNY ${formatMinor(user.cardBalanceLimitMinor)}` %></dd></div>
-    </dl>
-  </section>
+  <div class="panel-column">
+    <section class="panel">
+      <div class="panel-head"><div><p class="eyebrow">ACCOUNT BALANCE</p><h2>我的账户</h2></div></div>
+      <div class="amount">CNY <%= formatMinor(user.accountBalanceMinor) %></div>
+      <dl class="meta-list">
+        <div><dt>UID</dt><dd><code><%= user.uid %></code></dd></div>
+        <div><dt>分组</dt><dd><%= user.groupName || 'Default' %></dd></div>
+        <div><dt>生效消费限额</dt><dd><%= effectiveLimitMinor === null ? '不限制' : 'CNY ' + formatMinor(effectiveLimitMinor) %></dd></div>
+        <div><dt>累计已消费</dt><dd>CNY <%= formatMinor(spentMinor) %></dd></div>
+        <div><dt>卡面额度</dt><dd><%= user.cardBalanceLimitMinor === null ? '不限制' : `CNY ${formatMinor(user.cardBalanceLimitMinor)}` %></dd></div>
+      </dl>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><div><p class="eyebrow">ACCOUNT SECURITY</p><h2>修改登录密码</h2></div></div>
+      <form method="post" action="/admin/account/password" class="stack-form">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <label class="field"><span>原密码</span><input type="password" name="old_password" autocomplete="current-password" required></label>
+        <label class="field"><span>新密码</span><input type="password" name="new_password" autocomplete="new-password" maxlength="128" required></label>
+        <label class="field"><span>确认新密码</span><input type="password" name="confirm_password" autocomplete="new-password" maxlength="128" required></label>
+        <p class="form-hint">新密码需符合管理员配置的密码规则。修改成功后，当前账号的所有旧登录会话都会失效。</p>
+        <div class="form-actions"><button class="button button-primary" type="submit">更新密码</button></div>
+      </form>
+    </section>
+  </div>
   <section class="panel">
     <div class="panel-head"><div><p class="eyebrow">CARD TRANSFER</p><h2>账户与卡片互转</h2></div></div>
     <% if (!cards.length) { %><div class="empty-state compact">暂无可操作的虚拟卡。<a class="text-link" href="/admin/cards/new">创建虚拟卡</a></div><% } else { %>

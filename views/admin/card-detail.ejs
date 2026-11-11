@@ -39,7 +39,7 @@
       <form method="post" action="/admin/cards/<%= card.id %>/update" class="stack-form" data-money-confirm data-confirm-title="确认保存卡片设置" data-confirm-message="保存后卡余额和支付状态可能立即变化，请确认当前设置。" data-confirm-action="确认保存" data-confirm-currency="CNY" data-confirm-amount-field="balance" data-confirm-amount-label="卡余额" data-confirm-target-field="owner_user_id" data-confirm-target-label="所属用户" data-confirm-note="余额调整会写入卡片流水。">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <div class="form-row">
-          <label class="field"><span>所属用户</span><select name="owner_user_id"><% users.forEach((user) => { %><option value="<%= user.id %>" <%= card.ownerUserId === user.id ? 'selected' : '' %>><%= user.username %> · <%= user.role === 'admin' ? '管理员' : '普通用户' %></option><% }) %></select></label>
+          <label class="field"><span>所属用户</span><select name="owner_user_id"><% users.forEach((user) => { %><option value="<%= user.id %>" <%= card.ownerUserId === user.id ? 'selected' : '' %>><%= user.username %> · <%= roleLabel(user) %></option><% }) %></select></label>
           <label class="field"><span>状态</span><select name="status"><option value="active" <%= card.status === 'active' ? 'selected' : '' %>>可支付</option><option value="declined" <%= card.status === 'declined' ? 'selected' : '' %>>模拟拒付</option><option value="frozen" <%= card.status === 'frozen' ? 'selected' : '' %>>冻结</option></select></label>
         </div>
         <div class="form-row">

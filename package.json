@@ -1,6 +1,6 @@
 {
   "name": "epay-test-gateway",
-  "version": "2.2.5",
+  "version": "3.0.0",
   "private": true,
   "description": "A self-hosted Epay-compatible test gateway with user roles, virtual cards and an admin panel.",
   "main": "server.js",
@@ -9,6 +9,7 @@
     "dev": "node --watch server.js",
     "test": "node --test --test-concurrency=1 tests/*.test.js",
     "test:merchant": "node scripts/merchant-smoke.js",
+    "admin:reset-password": "node scripts/reset-admin-password.js",
     "rotate:app-secret": "node scripts/rotate-app-secret.js"
   },
   "engines": {

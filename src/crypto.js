@@ -117,6 +117,8 @@ function createUserSession(user, secret, ttlSeconds) {
     uid: Number(user.id),
     u: user.username,
     r: user.role,
+    sa: Boolean(user.isSuperAdmin),
+    pv: Number(user.passwordVersion || 0),
     csrf: randomToken(24),
     exp: Math.floor(Date.now() / 1000) + ttlSeconds
   };
@@ -133,6 +135,7 @@ function verifyUserSession(token, secret) {
   try {
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
     if (!Number.isSafeInteger(payload.uid) || payload.uid < 1 || !payload.u || !['admin', 'user'].includes(payload.r) || !payload.csrf || Number(payload.exp) <= Math.floor(Date.now() / 1000)) return null;
+    if (payload.pv !== undefined && (!Number.isSafeInteger(payload.pv) || payload.pv < 0)) return null;
     return payload;
   } catch {
     return null;

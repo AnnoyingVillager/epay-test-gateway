@@ -1,10 +1,13 @@
 const express = require('express');
 const { getSetting, getAllSettings, mapUser, mapCard, userByUid, userById, uniqueInviteCode, nextUid, isUsernameReserved } = require('./db');
-const { hashPassword } = require('./crypto');
+const { hashPassword, verifyPassword } = require('./crypto');
+const { validateNewPassword } = require('./password-service');
+const { clearSessionCookie } = require('./admin-auth');
 const { accountTransaction, depositToCard, withdrawFromCard } = require('./account-service');
 const { invitePermissionStatus, canUseInvites, replaceInviteCode, inviteTopology, validateCustomInviteCode } = require('./invite-service');
 const { effectiveSpendLimit, spentMinor } = require('./order-service');
 const { maskCardReferences } = require('./card-format');
+const { isSuperAdmin, canManageUser } = require('./permissions');
 
 function integer(value, min = 0, max = Number.MAX_SAFE_INTEGER) { const parsed = Number.parseInt(value, 10); return Number.isFinite(parsed) && parsed >= min && parsed <= max ? parsed : null; }
 function moneyInput(value, allowZero = true) { const raw = String(value ?? '').trim(); if (!/^\d{1,10}(?:\.\d{1,2})?$/.test(raw)) return null; const [whole, decimals = ''] = raw.split('.'); const minor = Number(whole) * 100 + Number(decimals.padEnd(2, '0')); return Number.isSafeInteger(minor) && (allowZero || minor > 0) ? minor : null; }
@@ -12,8 +15,18 @@ function redirectMessage(res, path, key, message) { res.redirect(`${path}${path.
 function settingInt(db, key, fallback = 0) { const value = Number.parseInt(getSetting(db, key, String(fallback)), 10); return Number.isFinite(value) ? value : fallback; }
 function postedCheckbox(value, fallback = false) { if (value === undefined) return fallback ? 1 : 0; return (Array.isArray(value) ? value : [value]).includes('1') ? 1 : 0; }
 
-function router({ db, config, adminOnly }) {
+function router({ db, config, adminOnly, superAdminOnly }) {
   const route = express.Router();
+
+  function denyUserManagement(res, target = null) {
+    return res.status(403).render('error', {
+      title: '没有访问权限',
+      message: target?.role === 'admin'
+        ? '普通管理员不能修改其他管理员账号。'
+        : '该账号受超级管理员保护，不能在用户管理中修改。',
+      statusCode: 403
+    });
+  }
 
   route.get('/account', (req, res) => {
     const user = userById(db, req.user.id);
@@ -23,6 +36,21 @@ function router({ db, config, adminOnly }) {
     const effectiveLimitMinor = effectiveSpendLimit(db, user.id);
     const spentMinorValue = spentMinor(db, user.id);
     res.render('admin/account', { title: '我的账户', user, cards, transactions, effectiveLimitMinor, spentMinor: spentMinorValue, settings: getAllSettings(db) });
+  });
+
+  route.post('/account/password', (req, res) => {
+    const row = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    if (!row || !row.is_active) return redirectMessage(res, '/admin/login', 'error', '当前账号不可用，请联系管理员。');
+    if (!verifyPassword(req.body.old_password, row.password_hash)) {
+      return redirectMessage(res, '/admin/account', 'error', '原密码不正确。');
+    }
+    const validationError = validateNewPassword(db, req.body.new_password, req.body.confirm_password, row.password_hash);
+    if (validationError) return redirectMessage(res, '/admin/account', 'error', validationError);
+    const now = Math.max(Date.now(), Number(row.password_changed_at || 0) + 1);
+    db.prepare('UPDATE users SET password_hash = ?, password_changed_at = ?, updated_at = ? WHERE id = ?')
+      .run(hashPassword(req.body.new_password), now, now, row.id);
+    clearSessionCookie(res);
+    return res.redirect('/admin/login?password_changed=1');
   });
 
   route.post('/account/deposit', (req, res) => {
@@ -90,9 +118,9 @@ function router({ db, config, adminOnly }) {
     return redirectMessage(res, '/admin/invite', 'ok', `已购买 ${quantity} 个邀请名额。`);
   });
 
-  route.get('/groups', adminOnly, (req, res) => res.render('admin/groups', { title: '用户分组', groups: db.prepare('SELECT * FROM user_groups ORDER BY id').all() }));
+  route.get('/groups', superAdminOnly, (req, res) => res.render('admin/groups', { title: '用户分组', groups: db.prepare('SELECT * FROM user_groups ORDER BY id').all() }));
 
-  route.post('/groups/:id/update', adminOnly, (req, res) => {
+  route.post('/groups/:id/update', superAdminOnly, (req, res) => {
     const id = integer(req.params.id, 1);
     const group = id ? db.prepare('SELECT * FROM user_groups WHERE id = ?').get(id) : null;
     const cardLimit = integer(req.body.card_limit, 0, 100000);
@@ -106,8 +134,11 @@ function router({ db, config, adminOnly }) {
 
   route.get('/users', adminOnly, (req, res) => {
     const q = String(req.query.q || '').trim();
-    const users = db.prepare(`SELECT u.*, g.name AS group_name FROM users u LEFT JOIN user_groups g ON g.id = u.group_id WHERE u.deleted_at IS NULL AND (? = '' OR u.username LIKE ? OR CAST(u.uid AS TEXT) = ?) ORDER BY CASE u.role WHEN 'admin' THEN 0 ELSE 1 END, u.created_at DESC`).all(q, `%${q}%`, q).map((row) => { const user = mapUser(row); return { ...user, invitePermission: invitePermissionStatus(user, db) }; });
-    res.render('admin/users-v2', { title: '用户管理', users, groups: db.prepare('SELECT * FROM user_groups ORDER BY id').all(), q, globalInvitesEnabled: getSetting(db, 'user_invites_enabled', '1') === '1' });
+    const users = db.prepare(`SELECT u.*, g.name AS group_name FROM users u LEFT JOIN user_groups g ON g.id = u.group_id WHERE u.deleted_at IS NULL AND (? = '' OR u.username LIKE ? OR CAST(u.uid AS TEXT) = ?) ORDER BY CASE u.role WHEN 'admin' THEN 0 ELSE 1 END, u.created_at DESC`).all(q, `%${q}%`, q).map((row) => {
+      const user = mapUser(row);
+      return { ...user, invitePermission: invitePermissionStatus(user, db), canManage: canManageUser(req.user, user) };
+    });
+    res.render('admin/users-v2', { title: '用户管理', users, groups: db.prepare('SELECT * FROM user_groups ORDER BY id').all(), q, globalInvitesEnabled: getSetting(db, 'user_invites_enabled', '1') === '1', isSuperAdmin: isSuperAdmin(req.user) });
   });
 
   route.post('/users', adminOnly, (req, res) => {
@@ -118,6 +149,7 @@ function router({ db, config, adminOnly }) {
     const canInvite = postedCheckbox(req.body.can_invite, true);
     const groupId = integer(req.body.group_id, 1) || db.prepare("SELECT id FROM user_groups WHERE name = 'Default'").get().id;
     if (!db.prepare('SELECT id FROM user_groups WHERE id = ?').get(groupId)) return redirectMessage(res, '/admin/users', 'error', '用户分组不存在。');
+    if (role === 'admin' && !isSuperAdmin(req.user)) return redirectMessage(res, '/admin/users', 'error', '只有超级管理员可以创建普通管理员。');
     if (!/^[A-Za-z0-9_.-]{3,32}$/.test(username) || isUsernameReserved(db, username) || password.length < 8 || password.length > 128 || !['admin', 'user'].includes(role)) return redirectMessage(res, '/admin/users', 'error', '用户名已被占用或是保留名称，密码或角色无效。');
     try {
       const now = Date.now();
@@ -137,7 +169,10 @@ function router({ db, config, adminOnly }) {
     const action = String(req.body.action || '');
     if (!['group', 'add_balance', 'subtract_balance', 'disable'].includes(action)) return redirectMessage(res, '/admin/users', 'error', '批量操作无效。');
     if (!ids.length) return redirectMessage(res, '/admin/users', 'error', '请至少选择一个用户。');
-    const selected = db.prepare(`SELECT id, role, uid FROM users WHERE deleted_at IS NULL AND id IN (${ids.map(() => '?').join(',')})`).all(...ids);
+    const selected = db.prepare(`SELECT id, role, uid, username FROM users WHERE deleted_at IS NULL AND id IN (${ids.map(() => '?').join(',')})`).all(...ids);
+    const eligible = selected.filter((user) => Number(user.uid) !== 0 && canManageUser(req.user, user));
+    const skipped = selected.length - eligible.length;
+    if (!eligible.length) return redirectMessage(res, '/admin/users', 'error', '选中的账号均无权由当前管理员修改。');
     const amount = ['add_balance', 'subtract_balance'].includes(action) ? moneyInput(req.body.amount, false) : null;
     if (['add_balance', 'subtract_balance'].includes(action) && amount === null) return redirectMessage(res, '/admin/users', 'error', '请输入有效的批量金额。');
     const groupId = action === 'group' ? integer(req.body.group_id, 1) : null;
@@ -145,14 +180,14 @@ function router({ db, config, adminOnly }) {
     const reason = String(req.body.disabled_reason || '风险控制').trim().slice(0, 200) || '风险控制';
     try {
       db.transaction(() => {
-        for (const user of selected) {
+        for (const user of eligible) {
           if (action === 'group') db.prepare('UPDATE users SET group_id = ?, updated_at = ? WHERE id = ?').run(groupId, Date.now(), user.id);
           else if (action === 'add_balance') accountTransaction(db, user.id, 'ADMIN_BATCH_CREDIT', amount, '管理员批量增加账户余额');
           else if (action === 'subtract_balance') accountTransaction(db, user.id, 'ADMIN_BATCH_DEBIT', -amount, '管理员批量减少账户余额');
-          else if (action === 'disable' && user.role !== 'admin') db.prepare('UPDATE users SET is_active = 0, disabled_reason = ?, updated_at = ? WHERE id = ?').run(reason, Date.now(), user.id);
+          else if (action === 'disable') db.prepare('UPDATE users SET is_active = 0, disabled_reason = ?, updated_at = ? WHERE id = ?').run(reason, Date.now(), user.id);
         }
       })();
-      return redirectMessage(res, '/admin/users', 'ok', `已处理 ${selected.length} 个用户。`);
+      return redirectMessage(res, '/admin/users', 'ok', `已处理 ${eligible.length} 个用户${skipped ? `，跳过 ${skipped} 个无权限账号` : ''}。`);
     } catch (error) { return redirectMessage(res, '/admin/users', 'error', error.message); }
   });
 
@@ -166,13 +201,50 @@ function router({ db, config, adminOnly }) {
     const riskEvents = db.prepare('SELECT * FROM risk_events WHERE user_id = ? ORDER BY created_at DESC LIMIT 50').all(user.id);
     const effectiveLimitMinor = effectiveSpendLimit(db, user.id);
     const spentMinorValue = spentMinor(db, user.id);
-    res.render('admin/user-detail', { title: `用户 ${user.username}`, user, topology, cards, groups: db.prepare('SELECT * FROM user_groups ORDER BY id').all(), transactions, riskEvents, effectiveLimitMinor, spentMinor: spentMinorValue, invitePermission: invitePermissionStatus(user, db) });
+    res.render('admin/user-detail', {
+      title: `用户 ${user.username}`,
+      user,
+      topology,
+      cards,
+      groups: db.prepare('SELECT * FROM user_groups ORDER BY id').all(),
+      transactions,
+      riskEvents,
+      effectiveLimitMinor,
+      spentMinor: spentMinorValue,
+      invitePermission: invitePermissionStatus(user, db),
+      canManage: canManageUser(req.user, user),
+      canSuperRisk: isSuperAdmin(req.user) && user.role === 'user' && !user.superRiskAt,
+      canDeleteUser: isSuperAdmin(req.user) && user.role === 'user' && Boolean(user.superRiskAt) && !user.isActive
+    });
+  });
+
+  route.post('/users/:uid/password', adminOnly, (req, res) => {
+    const user = userByUid(db, req.params.uid);
+    if (!user || user.deletedAt) return redirectMessage(res, '/admin/users', 'error', '用户不存在。');
+    if (user.superRiskAt) return redirectMessage(res, `/admin/users/${user.uid}`, 'error', '该账号已执行超级风控，不能修改密码。');
+    if (!canManageUser(req.user, user)) return denyUserManagement(res, user);
+    const current = db.prepare('SELECT password_hash, password_changed_at FROM users WHERE id = ?').get(user.id);
+    const validationError = validateNewPassword(db, req.body.new_password, req.body.new_password, current?.password_hash);
+    if (validationError) return redirectMessage(res, `/admin/users/${user.uid}`, 'error', validationError);
+    const now = Math.max(Date.now(), Number(current?.password_changed_at || 0) + 1);
+    db.transaction(() => {
+      db.prepare('UPDATE users SET password_hash = ?, password_changed_at = ?, updated_at = ? WHERE id = ?')
+        .run(hashPassword(req.body.new_password), now, now, user.id);
+      db.prepare('INSERT INTO risk_events (user_id, user_uid, actor_uid, event, details, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(user.id, user.uid, req.user.uid, 'PASSWORD_RESET', '管理员设定新密码', now);
+    })();
+    if (user.id === req.user.id) {
+      clearSessionCookie(res);
+      return res.redirect('/admin/login?password_changed=1');
+    }
+    return redirectMessage(res, `/admin/users/${user.uid}`, 'ok', `用户 ${user.username} 的密码已更新，原登录会话已失效。`);
   });
 
   route.post('/users/:uid/update', adminOnly, (req, res) => {
     const user = userByUid(db, req.params.uid);
     if (!user || user.deletedAt) return redirectMessage(res, '/admin/users', 'error', '用户不存在。');
     if (user.superRiskAt) return redirectMessage(res, `/admin/users/${user.uid}`, 'error', '该账号已执行超级风控，不能恢复或修改。');
+    if (!canManageUser(req.user, user)) return denyUserManagement(res, user);
     const groupId = integer(req.body.group_id, 1);
     if (!db.prepare('SELECT id FROM user_groups WHERE id = ?').get(groupId)) return redirectMessage(res, `/admin/users/${user.uid}`, 'error', '用户分组不存在。');
     const accountRisk = ['normal', 'watch', 'blocked'].includes(req.body.account_risk) ? req.body.account_risk : 'normal';
@@ -190,7 +262,7 @@ function router({ db, config, adminOnly }) {
     const isActive = req.body.is_active === '1' ? 1 : 0;
     const disabledReason = String(req.body.disabled_reason || '风险控制').trim().slice(0, 200) || '风险控制';
     if (!groupId || spendLimitInvalid || (!cardLimitUnlimited && cardBalanceLimit === null) || inviteLimit === null) return redirectMessage(res, `/admin/users/${user.uid}`, 'error', '用户参数无效。');
-    if (user.role === 'admin' && (!isActive || accountRisk === 'blocked')) return redirectMessage(res, `/admin/users/${user.uid}`, 'error', '不能通过该表单停用管理员账号。');
+    if (user.uid === 0 && (!isActive || accountRisk === 'blocked')) return redirectMessage(res, `/admin/users/${user.uid}`, 'error', 'UID 0 超级管理员不可禁用或设置为阻断状态。');
     db.prepare(`UPDATE users SET group_id = ?, account_risk = ?, card_risk = ?, spend_limit_minor = ?, card_balance_limit_minor = ?, invite_limit = ?, invite_permission_mode = ?, can_invite = ?, is_active = ?, disabled_reason = ?, updated_at = ? WHERE id = ?`).run(groupId, accountRisk, cardRisk, spendLimit, cardBalanceLimit, inviteLimit, invitePermissionMode, canInvite, isActive, isActive ? null : disabledReason, Date.now(), user.id);
     return redirectMessage(res, `/admin/users/${user.uid}`, 'ok', '用户配置已更新。');
   });
@@ -199,6 +271,7 @@ function router({ db, config, adminOnly }) {
     const user = userByUid(db, req.params.uid);
     if (!user || user.deletedAt) return redirectMessage(res, '/admin/users', 'error', '用户不存在。');
     if (user.superRiskAt) return redirectMessage(res, `/admin/users/${user.uid}`, 'error', '该账号已执行超级风控，不能修改邀请权限。');
+    if (!canManageUser(req.user, user)) return denyUserManagement(res, user);
     const invitePermissionMode = ['inherit', 'custom'].includes(String(req.body.invite_permission_mode)) ? String(req.body.invite_permission_mode) : user.invitePermissionMode;
     const canInvite = postedCheckbox(req.body.can_invite, user.canInvite);
     if (!['inherit', 'custom'].includes(invitePermissionMode)) return redirectMessage(res, '/admin/users', 'error', '邀请权限模式无效。');
@@ -211,6 +284,7 @@ function router({ db, config, adminOnly }) {
     const operation = String(req.body.operation || 'add');
     const amount = moneyInput(req.body.amount, operation === 'set');
     if (!user || user.deletedAt || user.superRiskAt || amount === null || !['add', 'subtract', 'set'].includes(operation)) return redirectMessage(res, '/admin/users', 'error', '余额调整参数无效。');
+    if (!canManageUser(req.user, user)) return denyUserManagement(res, user);
     try {
       db.transaction(() => {
         if (operation === 'set') accountTransaction(db, user.id, 'ADMIN_BALANCE_SET', amount - user.accountBalanceMinor, `管理员设置账户余额为 ${(amount / 100).toFixed(2)}`);
@@ -221,9 +295,9 @@ function router({ db, config, adminOnly }) {
     } catch (error) { return redirectMessage(res, `/admin/users/${user.uid}`, 'error', error.message); }
   });
 
-  route.post('/users/:uid/super-risk', adminOnly, (req, res) => {
+  route.post('/users/:uid/super-risk', superAdminOnly, (req, res) => {
     const user = userByUid(db, req.params.uid);
-    if (!user || user.deletedAt || user.role === 'admin') return redirectMessage(res, '/admin/users', 'error', '不能对该账号执行超级风控。');
+    if (!user || user.deletedAt || user.role === 'admin' || !canManageUser(req.user, user)) return redirectMessage(res, '/admin/users', 'error', '不能对该账号执行超级风控。');
     if (user.superRiskAt) return redirectMessage(res, `/admin/users/${user.uid}`, 'error', '该账号已执行过超级风控。');
     const reason = String(req.body.reason || '极端风险控制').trim().slice(0, 200) || '极端风险控制';
     db.transaction(() => {
@@ -240,11 +314,11 @@ function router({ db, config, adminOnly }) {
     return redirectMessage(res, `/admin/users/${user.uid}`, 'ok', '超级风控已完成，账号已禁用且名下卡片与余额已清空。');
   });
 
-  route.post('/users/:uid/delete', adminOnly, (req, res) => {
+  route.post('/users/:uid/delete', superAdminOnly, (req, res) => {
     const user = userByUid(db, req.params.uid);
     if (!user) return redirectMessage(res, '/admin/users', 'error', '不能删除该账号。');
     if (user.deletedAt) return redirectMessage(res, '/admin/users', 'error', '该账号已经删除。');
-    if (user.role === 'admin') return redirectMessage(res, '/admin/users', 'error', '不能删除管理员账号。');
+    if (user.role === 'admin' || !canManageUser(req.user, user)) return redirectMessage(res, '/admin/users', 'error', '不能删除管理员账号。');
     if (!user.superRiskAt || user.isActive) return redirectMessage(res, `/admin/users/${user.uid}`, 'error', '必须先完成超级风控并禁用账号，才能删除。');
     const invitees = db.prepare('SELECT uid, username FROM users WHERE invited_by_uid = ? ORDER BY uid').all(user.uid);
     const deletedInvitees = db.prepare('SELECT uid, username FROM deleted_users WHERE invited_by_uid = ? ORDER BY uid').all(user.uid);

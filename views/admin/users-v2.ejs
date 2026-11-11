@@ -16,9 +16,9 @@
       <% users.forEach((user) => { %>
         <% const invite = user.invitePermission; %>
         <tr>
-          <td><input form="batch-users" type="checkbox" name="user_ids" value="<%= user.id %>"></td>
+          <td><input form="batch-users" type="checkbox" name="user_ids" value="<%= user.id %>" <%= user.canManage && user.uid !== 0 ? '' : 'disabled' %> aria-label="选择 <%= user.username %>" title="<%= user.uid === 0 ? '超级管理员不能参与批量操作' : (user.canManage ? '' : '无权限操作该账号') %>"></td>
           <td><code><%= user.uid %></code></td>
-          <td><strong><%= user.username %></strong><br><small><%= user.role === 'admin' ? '管理员' : '普通用户' %></small></td>
+          <td><strong><%= user.username %></strong><br><small><%= roleLabel(user) %></small></td>
           <td><%= user.groupName || 'Default' %></td>
           <td><%= formatMinor(user.accountBalanceMinor) %></td>
           <td class="invite-permission-cell">
@@ -27,7 +27,7 @@
               <span class="pill <%= invite.enabled ? 'pill-success' : 'pill-muted' %>"><%= invite.enabled ? '可邀请' : '无权限' %></span>
             </div>
             <small><%= user.invitePermissionMode === 'custom' ? '单独开关' : '继承全局' %> · 全局<%= globalInvitesEnabled ? '开启' : '关闭' %></small>
-            <form method="post" action="/admin/users/<%= user.uid %>/invite-permission" class="invite-permission-form">
+            <% if (user.canManage) { %><form method="post" action="/admin/users/<%= user.uid %>/invite-permission" class="invite-permission-form">
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
               <select name="invite_permission_mode" aria-label="<%= user.username %> 的邀请权限模式">
                 <option value="inherit" <%= user.invitePermissionMode !== 'custom' ? 'selected' : '' %>>继承全局</option>
@@ -36,7 +36,7 @@
               <input type="hidden" name="can_invite" value="0">
               <label class="checkbox-field compact-checkbox"><input type="checkbox" name="can_invite" value="1" <%= user.canInvite ? 'checked' : '' %>><span>开启</span></label>
               <button class="button button-ghost button-small" type="submit">保存</button>
-            </form>
+            </form><% } %>
           </td>
           <td><%= user.accountRisk %> / <%= user.cardRisk %></td>
           <td><span class="pill <%= user.isActive ? 'pill-success' : 'pill-danger' %>"><%= user.isActive ? '启用' : '禁用' %></span></td>
@@ -63,12 +63,12 @@
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <label class="field"><span>用户名</span><input name="username" required autocomplete="off"></label>
       <label class="field"><span>密码</span><input type="password" name="password" minlength="8" required autocomplete="new-password"></label>
-      <label class="field"><span>角色</span><select name="role"><option value="user">普通用户</option><option value="admin">管理员（非根管理员）</option></select></label>
+      <label class="field"><span>角色</span><select name="role"><option value="user">普通用户</option><% if (isSuperAdmin) { %><option value="admin">普通管理员</option><% } %></select></label>
       <label class="field"><span>用户分组</span><select name="group_id"><% groups.forEach((group) => { %><option value="<%= group.id %>" <%= group.name === 'Default' ? 'selected' : '' %>><%= group.name %></option><% }) %></select></label>
       <label class="field"><span>邀请权限模式</span><select name="invite_permission_mode"><option value="inherit">继承全局策略</option><option value="custom">使用单独开关</option></select></label>
       <label class="field checkbox-field"><input type="hidden" name="can_invite" value="0"><input type="checkbox" name="can_invite" value="1" checked><span>开启单独邀请开关</span></label>
       <button class="button button-primary button-block" type="submit">创建用户</button>
-      <p class="form-hint">根管理员始终为 UID 0；其他用户自动分配独立 UID。单独开关模式不受全局邀请策略影响。</p>
+      <p class="form-hint">UID 0 是唯一超级管理员；其他用户自动分配独立 UID。<%= isSuperAdmin ? '超级管理员可创建普通管理员。' : '普通管理员只能创建普通用户。' %></p>
     </form>
   </aside>
 </div>

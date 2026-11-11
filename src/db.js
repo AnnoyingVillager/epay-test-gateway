@@ -142,6 +142,8 @@ function migrate(db, config) {
       uid INTEGER UNIQUE,
       username TEXT NOT NULL UNIQUE COLLATE NOCASE,
       password_hash TEXT NOT NULL,
+      password_changed_at INTEGER,
+      is_super_admin INTEGER NOT NULL DEFAULT 0,
       role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('admin', 'user')),
       email TEXT,
       group_id INTEGER REFERENCES user_groups(id),
@@ -338,6 +340,17 @@ function migrate(db, config) {
       created_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS password_reset_codes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      email TEXT NOT NULL,
+      code_hash TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      consumed_at INTEGER,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS deleted_users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER,
@@ -368,6 +381,8 @@ function migrate(db, config) {
 
   const addedUid = ensureColumn(db, 'users', 'uid', 'INTEGER');
   ensureColumn(db, 'users', 'email', 'TEXT');
+  ensureColumn(db, 'users', 'password_changed_at', 'INTEGER');
+  ensureColumn(db, 'users', 'is_super_admin', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'users', 'group_id', 'INTEGER REFERENCES user_groups(id)');
   ensureColumn(db, 'users', 'account_balance_minor', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'users', 'invite_code', 'TEXT');
@@ -428,6 +443,7 @@ function migrate(db, config) {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_refunds_merchant_out_no ON refunds(merchant_id, out_refund_no) WHERE out_refund_no IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_merchant_tx_reference ON merchant_transactions(reference) WHERE reference IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_email_codes_email ON email_verification_codes(email, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_password_reset_user ON password_reset_codes(user_id, created_at DESC);
   `);
 
   if (addedBin3ds) {
@@ -497,11 +513,12 @@ function seed(db, config) {
       }
     }
 
-    const configuredAdmin = db.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE').get(config.adminUsername)
-      || db.prepare("SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1").get();
-    if (configuredAdmin && !db.prepare('SELECT id FROM users WHERE uid = 0 AND id <> ?').get(configuredAdmin.id)) {
-      db.prepare('UPDATE users SET uid = NULL WHERE uid = 0 AND id <> ?').run(configuredAdmin.id);
-      db.prepare('UPDATE users SET uid = 0 WHERE id = ?').run(configuredAdmin.id);
+    // UID 0 is immutable after initialization. Changing ADMIN_USERNAME in the
+    // environment must not transfer super-administrator identity between accounts.
+    if (!db.prepare('SELECT id FROM users WHERE uid = 0').get()) {
+      const configuredAdmin = db.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE').get(config.adminUsername)
+        || db.prepare("SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1").get();
+      if (configuredAdmin) db.prepare('UPDATE users SET uid = 0 WHERE id = ?').run(configuredAdmin.id);
     }
 
     const inviteLength = Math.min(20, Math.max(6, Number.parseInt(db.prepare("SELECT value FROM settings WHERE key = 'invite_random_length'").get().value, 10) || 8));
@@ -533,6 +550,64 @@ function seed(db, config) {
   })();
 }
 
+function ensureRootSuperAdmin(db) {
+  const now = Date.now();
+  db.transaction(() => {
+    let root = db.prepare('SELECT id FROM users WHERE uid = 0').get();
+    if (!root) {
+      const candidate = db.prepare("SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1").get();
+      if (!candidate) throw new Error('No administrator account is available for UID 0');
+      db.prepare("UPDATE users SET uid = 0, role = 'admin', is_super_admin = 1, is_active = 1, account_risk = 'normal', deleted_at = NULL, updated_at = ? WHERE id = ?")
+        .run(now, candidate.id);
+      root = candidate;
+    } else {
+      db.prepare("UPDATE users SET role = 'admin', is_super_admin = 1, is_active = 1, account_risk = 'normal', deleted_at = NULL, updated_at = ? WHERE id = ?")
+        .run(now, root.id);
+    }
+    db.prepare('UPDATE users SET is_super_admin = 0 WHERE uid IS NULL OR uid <> 0').run();
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_single_super_admin ON users(is_super_admin) WHERE is_super_admin = 1');
+  })();
+}
+
+function installSuperAdminGuards(db) {
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_users_root_superadmin_insert
+    BEFORE INSERT ON users
+    WHEN COALESCE(NEW.is_super_admin, 0) = 1 AND COALESCE(NEW.uid, -1) <> 0
+    BEGIN
+      SELECT RAISE(ABORT, 'Only UID 0 can be super administrator');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_users_root_superadmin_update
+    BEFORE UPDATE ON users
+    WHEN OLD.uid = 0 AND (
+      COALESCE(NEW.uid, -1) <> 0 OR
+      NEW.role <> 'admin' OR
+      COALESCE(NEW.is_super_admin, 0) <> 1 OR
+      NEW.is_active <> 1 OR
+      NEW.account_risk = 'blocked' OR
+      NEW.deleted_at IS NOT NULL
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'UID 0 super administrator cannot be disabled, deleted, or demoted');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_users_other_superadmin_update
+    BEFORE UPDATE ON users
+    WHEN COALESCE(NEW.is_super_admin, 0) = 1 AND COALESCE(NEW.uid, -1) <> 0
+    BEGIN
+      SELECT RAISE(ABORT, 'Only UID 0 can be super administrator');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_users_root_superadmin_delete
+    BEFORE DELETE ON users
+    WHEN OLD.uid = 0
+    BEGIN
+      SELECT RAISE(ABORT, 'UID 0 super administrator cannot be deleted');
+    END;
+  `);
+}
+
 function openDatabase(config) {
   if (config.databasePath !== ':memory:') fs.mkdirSync(path.dirname(config.databasePath), { recursive: true });
   const db = new Database(config.databasePath);
@@ -540,6 +615,8 @@ function openDatabase(config) {
   db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
   migrate(db, config);
   seed(db, config);
+  ensureRootSuperAdmin(db);
+  installSuperAdminGuards(db);
   return db;
 }
 
@@ -564,6 +641,8 @@ function mapUser(row) {
     id: row.id,
     uid: row.uid,
     username: row.username,
+    passwordVersion: row.password_changed_at || 0,
+    isSuperAdmin: Boolean(row.is_super_admin),
     role: row.role,
     email: row.email || null,
     groupId: row.group_id,

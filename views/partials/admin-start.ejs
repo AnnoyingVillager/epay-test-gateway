@@ -10,19 +10,21 @@
       <a class="<%= currentPath.startsWith('/admin/cards') ? 'active' : '' %>" href="/admin/cards">虚拟卡</a>
       <a class="<%= currentPath.startsWith('/admin/account') ? 'active' : '' %>" href="/admin/account">账户</a>
       <a class="<%= currentPath.startsWith('/admin/invite') ? 'active' : '' %>" href="/admin/invite">邀请</a>
-      <% if (currentUser.role === 'admin') { %>
+      <% if (currentUser.isSuperAdmin) { %>
         <a class="<%= currentPath.startsWith('/admin/bins') ? 'active' : '' %>" href="/admin/bins">卡 BIN</a>
       <% } %>
       <a class="<%= currentPath.startsWith('/admin/orders') ? 'active' : '' %>" href="/admin/orders">订单</a>
       <% if (currentUser.role === 'admin') { %>
         <a class="<%= currentPath.startsWith('/admin/users') ? 'active' : '' %>" href="/admin/users">用户</a>
+      <% } %>
+      <% if (currentUser.isSuperAdmin) { %>
         <a class="<%= currentPath.startsWith('/admin/groups') ? 'active' : '' %>" href="/admin/groups">分组</a>
         <a class="<%= currentPath.startsWith('/admin/merchants') ? 'active' : '' %>" href="/admin/merchants">商户</a>
         <a class="<%= currentPath.startsWith('/admin/settings') ? 'active' : '' %>" href="/admin/settings">设置</a>
       <% } %>
     </nav>
     <div class="topbar-actions">
-      <span class="site-label"><%= currentUser.username %> · <%= currentUser.role === 'admin' ? '管理员' : '普通用户' %></span>
+      <span class="site-label"><%= currentUser.username %> · <%= currentRoleLabel %></span>
       <a class="text-link" href="/admin/logout">退出</a>
     </div>
   </div>
